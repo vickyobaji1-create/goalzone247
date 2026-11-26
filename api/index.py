@@ -259,3 +259,30 @@ def handler(event, context):
         with open(os.path.join(base,"index.html"),encoding="utf-8") as f: html=f.read()
         return {"statusCode":200,"headers":{"Content-Type":"text/html"},"body":html}
     except Exception as e: return _json({"error":str(e)},500)
+
+
+# --- Flask wrapper for Vercel - MUST be at bottom, defines top-level app ---
+try:
+    from flask import Flask, request, Response
+    app = Flask(__name__)
+    @app.route("/api/<path:subpath>", methods=["GET","POST","PUT","DELETE"])
+    @app.route("/api", methods=["GET","POST"])
+    @app.route("/", methods=["GET"])
+    def _flask_entry(subpath=""):
+        import json as _json2
+        path = "/" + ("api/"+subpath if subpath else "api" if request.path.startswith("/api") else "")
+        if request.path == "/":
+            path = "/"
+        elif request.path.startswith("/api"):
+            path = request.path
+        else:
+            path = request.path
+        event = {"path": path, "httpMethod": request.method, "body": request.get_data(as_text=True) or "", "queryStringParameters": dict(request.args)}
+        res = handler(event, None)
+        body = res.get("body","")
+        headers = res.get("headers",{})
+        return Response(body, status=res.get("statusCode",200), content_type=headers.get("Content-Type","application/json"))
+    # Vercel also looks for app at top level - it is defined above
+except Exception as _e:
+    # If Flask not available, keep handler for local use
+    app = None
