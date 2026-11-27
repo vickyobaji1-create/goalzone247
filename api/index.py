@@ -1,4 +1,4 @@
-# Goalzone247 Backend v6.3 - Vercel + Supabase
+# Goalzone247 Backend v6.4 - Vercel + Supabase + requests
 # Daily fixtures, accumulator cards, and standings are stored in Supabase.
 # Historical reads never call API-Football. Estimated fallback prices are
 # explicitly labelled and must never be represented as bookmaker odds.
@@ -6,10 +6,10 @@
 import os
 import json
 import time
-import urllib.request
-import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+
+import requests
 
 try:
     from zoneinfo import ZoneInfo
@@ -17,10 +17,10 @@ try:
 except Exception:
     LOCAL_TZ = timezone(timedelta(hours=1))
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
-SUPABASE_ANON = os.environ.get("SUPABASE_ANON_KEY", "")
-SUPABASE_SERVICE = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or SUPABASE_ANON
-API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY", "")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_ANON = os.environ.get("SUPABASE_ANON_KEY", "").strip()
+SUPABASE_SERVICE = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or SUPABASE_ANON).strip()
+API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY", "").strip()
 HOST = "v3.football.api-sports.io"
 KEEP_DAYS = 10
 MAX_STANDINGS_LEAGUES = 12
@@ -76,37 +76,42 @@ def _headers(service=False, prefer=None):
     return result
 
 
-def _sb_request(method, table, query="", data=None, service=True, prefer=None):
-    if not SUPABASE_URL:
-        return {"error": "SUPABASE_URL is not configured"}
+def _clean_supabase_url():
     clean_url = SUPABASE_URL.rstrip("/")
     if clean_url.endswith("/rest/v1"):
         clean_url = clean_url[: -len("/rest/v1")]
+    return clean_url
+
+
+def _sb_request(method, table, query="", data=None, service=True, prefer=None):
+    if not SUPABASE_URL:
+        return {"error": "SUPABASE_URL is not configured"}
+    clean_url = _clean_supabase_url()
     key = SUPABASE_SERVICE if service else SUPABASE_ANON
     if not key:
         return {"error": "Supabase key is not configured"}
     url = f"{clean_url}/rest/v1/{table}"
     if query:
         url += "?" + query
-    payload = None if data is None else json.dumps(data).encode("utf-8")
 
     last_err = ""
     for attempt in range(3):
-        request = urllib.request.Request(
-            url, data=payload, headers=_headers(service, prefer), method=method
-        )
         try:
-            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
-                raw = response.read().decode("utf-8")
-                if not raw:
-                    return {"ok": True, "status": response.status}
-                try:
-                    return json.loads(raw)
-                except ValueError:
-                    return {"ok": True, "body": raw, "status": response.status}
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            return {"error": f"Supabase HTTP {exc.code}: {detail}"}
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=_headers(service, prefer),
+                json=data if data is not None else None,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code >= 400:
+                return {"error": f"Supabase HTTP {response.status_code}: {response.text}"}
+            if not response.text:
+                return {"ok": True, "status": response.status_code}
+            try:
+                return response.json()
+            except ValueError:
+                return {"ok": True, "body": response.text, "status": response.status_code}
         except Exception as exc:
             last_err = str(exc)
             if attempt < 2:
@@ -155,24 +160,27 @@ def sb_delete_old(table, cutoff_date):
 def af_get(path):
     if not API_FOOTBALL_KEY:
         return {"response": [], "error": "API_FOOTBALL_KEY is not configured"}
-    request = urllib.request.Request(
-        f"https://{HOST}{path}",
-        headers={"x-apisports-key": API_FOOTBALL_KEY},
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
-            data = json.loads(response.read().decode("utf-8"))
+    last_err = ""
+    for attempt in range(3):
+        try:
+            response = requests.get(
+                f"https://{HOST}{path}",
+                headers={"x-apisports-key": API_FOOTBALL_KEY},
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code >= 400:
+                return {"response": [], "error": f"API-Football HTTP {response.status_code}: {response.text}"}
+            data = response.json()
             if not isinstance(data, dict):
                 return {"response": [], "error": "Unexpected API-Football response"}
             if data.get("errors"):
                 return {"response": [], "error": str(data["errors"])}
             return data
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        return {"response": [], "error": f"API-Football HTTP {exc.code}: {detail}"}
-    except Exception as exc:
-        return {"response": [], "error": str(exc)}
+        except Exception as exc:
+            last_err = str(exc)
+            if attempt < 2:
+                time.sleep(0.4 * (attempt + 1))
+    return {"response": [], "error": last_err}
 
 
 def team_stats(last10):
