@@ -1,10 +1,11 @@
-# Goalzone247 Backend v6.2 - Vercel + Supabase
+# Goalzone247 Backend v6.3 - Vercel + Supabase
 # Daily fixtures, accumulator cards, and standings are stored in Supabase.
 # Historical reads never call API-Football. Estimated fallback prices are
 # explicitly labelled and must never be represented as bookmaker odds.
 
 import os
 import json
+import time
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -78,30 +79,40 @@ def _headers(service=False, prefer=None):
 def _sb_request(method, table, query="", data=None, service=True, prefer=None):
     if not SUPABASE_URL:
         return {"error": "SUPABASE_URL is not configured"}
+    clean_url = SUPABASE_URL.rstrip("/")
+    if clean_url.endswith("/rest/v1"):
+        clean_url = clean_url[: -len("/rest/v1")]
     key = SUPABASE_SERVICE if service else SUPABASE_ANON
     if not key:
         return {"error": "Supabase key is not configured"}
-    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    url = f"{clean_url}/rest/v1/{table}"
     if query:
         url += "?" + query
     payload = None if data is None else json.dumps(data).encode("utf-8")
-    request = urllib.request.Request(
-        url, data=payload, headers=_headers(service, prefer), method=method
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
-            raw = response.read().decode("utf-8")
-            if not raw:
-                return {"ok": True, "status": response.status}
-            try:
-                return json.loads(raw)
-            except ValueError:
-                return {"ok": True, "body": raw, "status": response.status}
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        return {"error": f"Supabase HTTP {exc.code}: {detail}"}
-    except Exception as exc:
-        return {"error": str(exc)}
+
+    last_err = ""
+    for attempt in range(3):
+        request = urllib.request.Request(
+            url, data=payload, headers=_headers(service, prefer), method=method
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
+                raw = response.read().decode("utf-8")
+                if not raw:
+                    return {"ok": True, "status": response.status}
+                try:
+                    return json.loads(raw)
+                except ValueError:
+                    return {"ok": True, "body": raw, "status": response.status}
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            return {"error": f"Supabase HTTP {exc.code}: {detail}"}
+        except Exception as exc:
+            last_err = str(exc)
+            if attempt < 2:
+                time.sleep(0.4 * (attempt + 1))
+
+    return {"error": last_err}
 
 
 def _has_error(value):
@@ -362,7 +373,6 @@ def _collect_candidates(matches, markets, filter_fn=None):
 def build_extra_cards(matches, used):
     extra_cards = []
 
-    # 2.50 Rollover: Morning Session (Card 1 & Card 2) + Evening Session (Card 1 & Card 2)
     morning_250_pool = _collect_candidates(
         matches, ("Over 1.5", "Home Score Over 0.5", "Away Score Over 0.5"),
         lambda m: _kickoff_hour_wat(m) < 14,
@@ -378,7 +388,6 @@ def build_extra_cards(matches, used):
     extra_cards.append(build_card("2.50 Rollover - Evening Card 1", evening_250_pool, used, 2, 4, 2.50, "2.50+"))
     extra_cards.append(build_card("2.50 Rollover - Evening Card 2", evening_250_pool, used, 2, 4, 2.50, "2.50+"))
 
-    # Early Morning, Morning, Midnight, and Mega Mix Accumulator Cards (pure goal lines, no BTTS)
     early_morning_pool = _collect_candidates(matches, GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) < 12) or _collect_candidates(matches, GOAL_MARKETS)
     morning_pool = _collect_candidates(matches, GOAL_MARKETS, lambda m: 6 <= _kickoff_hour_wat(m) < 15) or _collect_candidates(matches, GOAL_MARKETS)
     midnight_pool = _collect_candidates(matches, GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) >= 21 or _kickoff_hour_wat(m) < 4) or _collect_candidates(matches, GOAL_MARKETS)
