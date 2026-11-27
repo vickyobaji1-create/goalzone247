@@ -6,7 +6,7 @@
   <title>GOALZONE247 — Goal Markets & Accumulators</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     :root {
       --bg: #0f1417;
@@ -52,7 +52,7 @@
 
     button, input, select {
       font-family: inherit;
-      font-weight: 500;
+      font-weight: 400;
       color: inherit;
       min-width: 0;
     }
@@ -73,7 +73,7 @@
 
     .mono {
       font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-weight: 500;
+      font-weight: 400;
     }
 
     @keyframes pulseDot {
@@ -118,7 +118,7 @@
       font-size: 24px;
       line-height: 1.05;
       letter-spacing: -0.02em;
-      font-weight: 700;
+      font-weight: 600;
     }
 
     .brand-word .brand-num {
@@ -134,7 +134,7 @@
       border: 1px solid var(--border2);
       background: var(--card);
       font-size: 11px;
-      font-weight: 500;
+      font-weight: 400;
       color: var(--muted);
     }
 
@@ -167,13 +167,14 @@
       background: var(--card);
       color: #cbd5d9;
       font-size: 11px;
-      font-weight: 500;
+      font-weight: 400;
     }
 
     .action-pill.active {
       border-color: var(--green);
       background: #23332b;
       color: var(--green);
+      font-weight: 500;
     }
 
     .day-nav, .history-tabs {
@@ -193,7 +194,7 @@
       background: var(--card);
       color: var(--muted);
       font-size: 12px;
-      font-weight: 500;
+      font-weight: 400;
       white-space: nowrap;
       flex-shrink: 0;
     }
@@ -202,7 +203,7 @@
       background: var(--green);
       color: #0f1417;
       border-color: var(--green);
-      font-weight: 600;
+      font-weight: 500;
     }
 
     .history-tab {
@@ -217,7 +218,7 @@
       background: var(--card);
       color: var(--muted);
       font-size: 12px;
-      font-weight: 500;
+      font-weight: 400;
       flex-shrink: 0;
     }
 
@@ -225,7 +226,7 @@
       background: var(--green);
       color: #0f1417;
       border-color: var(--green);
-      font-weight: 600;
+      font-weight: 500;
     }
 
     .history-tab .tab-sub {
@@ -284,7 +285,7 @@
       background: var(--card);
       color: var(--text);
       font-size: 12px;
-      font-weight: 500;
+      font-weight: 400;
     }
 
     .section-head {
@@ -304,7 +305,7 @@
 
     .section-count {
       font-size: 11px;
-      font-weight: 500;
+      font-weight: 400;
       color: var(--green);
       white-space: nowrap;
     }
@@ -322,7 +323,7 @@
       background: var(--gold);
       color: #0f1417;
       font-size: 10px;
-      font-weight: 600;
+      font-weight: 500;
     }
 
     .line-label {
@@ -396,7 +397,7 @@
       background: var(--gold);
       color: #0f1417;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
       flex-shrink: 0;
     }
 
@@ -423,7 +424,7 @@
       background: var(--green2);
       color: #0f1417;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
       white-space: nowrap;
     }
 
@@ -433,7 +434,7 @@
       border: 1px solid var(--green);
       color: var(--green);
       font-size: 10px;
-      font-weight: 500;
+      font-weight: 400;
       white-space: nowrap;
     }
 
@@ -443,7 +444,7 @@
       border: 1px solid var(--border2);
       color: var(--muted);
       font-size: 10px;
-      font-weight: 500;
+      font-weight: 400;
       white-space: nowrap;
     }
 
@@ -475,14 +476,14 @@
       background: #2a3238;
       color: #d5dfe3;
       font-size: 10px;
-      font-weight: 500;
+      font-weight: 400;
       white-space: nowrap;
     }
 
     .mini-btn.gold {
       background: var(--gold);
       color: #141a1e;
-      font-weight: 600;
+      font-weight: 500;
     }
 
     .mini-btn.done {
@@ -512,7 +513,7 @@
 
     .leg-teams {
       color: var(--text);
-      font-weight: 500;
+      font-weight: 400;
     }
 
     .leg-sub {
@@ -529,7 +530,71 @@
 
     .leg-odd {
       color: var(--green);
+      font-weight: 400;
+    }
+
+    /* Single 2.50 Rollover section with side-by-side Morning / Evening buttons and Card 1 / Card 2 switcher */
+    .rollover-box {
+      margin-top: 8px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      padding: 12px;
+    }
+
+    .session-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .session-btn {
+      padding: 9px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border2);
+      background: var(--card2);
+      color: var(--text);
+      font-size: 12px;
       font-weight: 500;
+      text-align: center;
+    }
+
+    .session-btn.active {
+      background: var(--green);
+      color: #0f1417;
+      border-color: var(--green);
+      font-weight: 600;
+    }
+
+    .subcard-row {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .subcard-btn {
+      padding: 7px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #171d22;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 400;
+      text-align: center;
+    }
+
+    .subcard-btn.active {
+      border-color: var(--gold);
+      color: var(--gold);
+      background: #24221a;
+      font-weight: 500;
+    }
+
+    .rollover-detail {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
     }
 
     .special-stack {
@@ -587,7 +652,7 @@
       background: var(--green2);
       color: #0f1417;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 500;
       flex-shrink: 0;
     }
 
@@ -595,7 +660,7 @@
       flex: 1;
       min-width: 140px;
       font-size: 15px;
-      font-weight: 600;
+      font-weight: 500;
       line-height: 1.25;
       color: var(--text);
     }
@@ -606,7 +671,7 @@
       background: var(--gold);
       color: #0f1417;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 500;
       flex-shrink: 0;
     }
 
@@ -622,7 +687,6 @@
       color: var(--muted);
     }
 
-    /* Responsive market grid so 5 or 4 boxes fit inside any screen width without clipping */
     .match-grid {
       margin-top: 10px;
       display: grid;
@@ -651,7 +715,7 @@
 
     .market-box-odd {
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 500;
       color: var(--green);
     }
 
@@ -726,7 +790,7 @@
       align-items: center;
       justify-content: center;
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 500;
       box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
     }
 
@@ -754,7 +818,7 @@
       border: 1px solid var(--border2);
       color: #ffffff;
       font-size: 12px;
-      font-weight: 500;
+      font-weight: 400;
       text-align: center;
       box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
     }
@@ -864,12 +928,31 @@
     </section>
 
     <div class="narrow-col">
-      <section aria-label="2.50 Rollover and Session / Mix Accumulators">
+      <section aria-label="2.50 Rollover Card">
         <div class="section-head">
-          <h2 class="section-title">2.50 Rollover &amp; Session / Mix Cards</h2>
-          <span class="section-count mono" id="special-cards-count">8 cards</span>
+          <h2 class="section-title">2.50 Rollover Card</h2>
+          <span class="section-count mono">Morning &amp; Evening Sessions</span>
         </div>
-        <p class="sub-line">2.50 Rollover (Morning Card 1 &amp; 2, Evening Card 1 &amp; 2) plus Early Morning, Morning, Midnight, and Mega Mix accumulators.</p>
+        <p class="sub-line">Tap Morning or Evening side by side, then switch between Card 1 and Card 2.</p>
+        <div class="rollover-box">
+          <div class="session-row" role="tablist" aria-label="2.50 Rollover session">
+            <button type="button" class="session-btn active" data-rollover-session="Morning" aria-selected="true">Morning 2.50 Rollover</button>
+            <button type="button" class="session-btn" data-rollover-session="Evening" aria-selected="false">Evening 2.50 Rollover</button>
+          </div>
+          <div class="subcard-row" role="tablist" aria-label="2.50 Rollover card number">
+            <button type="button" class="subcard-btn active" data-rollover-slot="1" aria-selected="true">Card 1</button>
+            <button type="button" class="subcard-btn" data-rollover-slot="2" aria-selected="false">Card 2</button>
+          </div>
+          <div class="rollover-detail" id="rollover-panel"></div>
+        </div>
+      </section>
+
+      <section aria-label="Time-Window and Mix Accumulators">
+        <div class="section-head">
+          <h2 class="section-title">Time-Window &amp; Mix Accumulators</h2>
+          <span class="section-count mono">4 cards</span>
+        </div>
+        <p class="sub-line">Early Morning, Morning, Midnight, and Mega Mix accumulators.</p>
         <div class="special-stack" id="special-cards"></div>
       </section>
 
@@ -933,11 +1016,7 @@
         { name: "Away Over 1.5", short: "A-O1.5", fallbackOdd: 2.10 }
       ];
 
-      const SPECIAL_CARD_LABELS = [
-        "2.50 Rollover - Morning Card 1",
-        "2.50 Rollover - Morning Card 2",
-        "2.50 Rollover - Evening Card 1",
-        "2.50 Rollover - Evening Card 2",
+      const MIX_CARD_LABELS = [
         "Early Morning Accumulator",
         "Morning Accumulator",
         "Midnight Accumulator",
@@ -950,6 +1029,8 @@
         market: "All markets",
         league: "All leagues",
         selectedHistoryDate: null,
+        rolloverSession: "Morning",
+        rolloverSlot: "1",
         cards: [],
         matches: [],
         standings: {},
@@ -1286,19 +1367,58 @@
         $("market-cards-count").textContent = `${filteredMarkets.length} market${filteredMarkets.length === 1 ? "" : "s"}`;
       }
 
+      function renderRolloverSection() {
+        document.querySelectorAll("[data-rollover-session]").forEach((btn) => {
+          const active = btn.dataset.rolloverSession === STATE.rolloverSession;
+          btn.classList.toggle("active", active);
+          btn.setAttribute("aria-selected", String(active));
+        });
+
+        document.querySelectorAll("[data-rollover-slot]").forEach((btn) => {
+          const active = btn.dataset.rolloverSlot === STATE.rolloverSlot;
+          btn.classList.toggle("active", active);
+          btn.setAttribute("aria-selected", String(active));
+        });
+
+        const key = `2.50 rollover - ${STATE.rolloverSession} card ${STATE.rolloverSlot}`.toLowerCase();
+        const found = STATE.cards.find((c) => String(c?.market || "").trim().toLowerCase() === key);
+        const legs = sortLegs(parseLegs(found?.legs));
+        const badge = computeCardBadge(found || {}, legs);
+        const heading = `${STATE.rolloverSession} 2.50 Rollover — Card ${STATE.rolloverSlot}`;
+
+        $("rollover-panel").innerHTML = `
+          <div class="special-head">
+            <h3 style="font-size:14px;font-weight:600;">${escapeHtml(heading)}</h3>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span class="odds-pill mono">${escapeHtml(found?.total_odds ?? "—")} odds</span>
+              <span class="target-pill mono">Target ${escapeHtml(found?.target || "2.50+")}</span>
+              <span class="result-pill ${badge.cls}">${escapeHtml(badge.text)}</span>
+            </div>
+          </div>
+          ${legs.length
+            ? `<div class="acc-legs" style="padding:8px 0 0;">${legs.map((leg, i) => `
+                <div class="leg-row">
+                  <div class="leg-teams">${i + 1}. ${escapeHtml(leg.teams)}</div>
+                  <div class="leg-sub">
+                    <span>${escapeHtml(leg.league)} · ${escapeHtml(leg.market)}</span>
+                    <span class="leg-odd mono">@${escapeHtml(leg.odds)} · ${escapeHtml(leg.status)}</span>
+                  </div>
+                </div>
+              `).join("")}</div>`
+            : `<p class="sub-line" style="margin-top:6px;">No legs recorded for ${escapeHtml(heading)} yet.</p>`}
+        `;
+      }
+
       function renderSpecialCards() {
         const byName = new Map();
         STATE.cards.forEach((c) => {
-          if (c && c.market) byName.set(String(c.market).toLowerCase(), c);
+          if (c && c.market) byName.set(String(c.market).trim().toLowerCase(), c);
         });
 
-        $("special-cards-count").textContent = `${SPECIAL_CARD_LABELS.length} cards`;
-
-        $("special-cards").innerHTML = SPECIAL_CARD_LABELS.map((label) => {
+        $("special-cards").innerHTML = MIX_CARD_LABELS.map((label) => {
           const found = byName.get(label.toLowerCase());
           const legs = sortLegs(parseLegs(found?.legs));
           const badge = computeCardBadge(found || {}, legs);
-          const defaultTarget = label.startsWith("2.50 Rollover") ? "2.50+" : "12.00+";
 
           return `
             <article class="special-card">
@@ -1306,7 +1426,7 @@
                 <h3 style="font-size:14px;font-weight:600;">${escapeHtml(label)}</h3>
                 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                   <span class="odds-pill mono">${escapeHtml(found?.total_odds ?? "—")} odds</span>
-                  <span class="target-pill mono">Target ${escapeHtml(found?.target || defaultTarget)}</span>
+                  <span class="target-pill mono">Target ${escapeHtml(found?.target || "12.00+")}</span>
                   <span class="result-pill ${badge.cls}">${escapeHtml(badge.text)}</span>
                 </div>
               </div>
@@ -1346,7 +1466,7 @@
               : mkt.fallbackOdd.toFixed(2);
             return `
               <div class="market-box">
-                <span style="font-size:11px;font-weight:500;">${escapeHtml(mkt.short)}</span>
+                <span style="font-size:11px;font-weight:400;">${escapeHtml(mkt.short)}</span>
                 <span class="market-box-odd mono">${escapeHtml(suppliedOdd)}</span>
                 <span class="result-pill ${status === "Live" ? "live" : ""}" style="font-size:9px;padding:2px 6px;">${escapeHtml(status)}</span>
               </div>
@@ -1406,7 +1526,7 @@
               ${rows.map((r) => `
                 <div class="standing-row">
                   <span><span class="mono" style="color:var(--green);margin-right:8px;">${escapeHtml(r.position)}</span>${escapeHtml(r.team)}</span>
-                  <span class="mono" style="color:var(--muted);">${escapeHtml(r.played)} &nbsp; <strong style="color:#fff;font-weight:600;">${escapeHtml(r.points)}</strong></span>
+                  <span class="mono" style="color:var(--muted);">${escapeHtml(r.played)} &nbsp; <strong style="color:#fff;font-weight:500;">${escapeHtml(r.points)}</strong></span>
                 </div>
               `).join("")}
             </div>
@@ -1475,6 +1595,7 @@
 
       function renderAll() {
         renderMarketCards();
+        renderRolloverSection();
         renderSpecialCards();
         renderMatches();
         renderStandings();
@@ -1498,6 +1619,20 @@
             btn.classList.add("active");
             STATE.windowMode = btn.dataset.window || "Today";
             loadPrimaryData();
+          });
+        });
+
+        document.querySelectorAll("[data-rollover-session]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            STATE.rolloverSession = btn.dataset.rolloverSession || "Morning";
+            renderRolloverSection();
+          });
+        });
+
+        document.querySelectorAll("[data-rollover-slot]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            STATE.rolloverSlot = btn.dataset.rolloverSlot || "1";
+            renderRolloverSection();
           });
         });
 
