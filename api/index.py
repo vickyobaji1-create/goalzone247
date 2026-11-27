@@ -1,5 +1,5 @@
-# Goalzone247 Backend v6 - Vercel + Supabase
-# Daily fixtures, accumulator cards and standings are stored in Supabase.
+# Goalzone247 Backend v6.2 - Vercel + Supabase
+# Daily fixtures, accumulator cards, and standings are stored in Supabase.
 # Historical reads never call API-Football. Estimated fallback prices are
 # explicitly labelled and must never be represented as bookmaker odds.
 
@@ -34,8 +34,13 @@ MARKETS_12 = [
     "Home Score Over 0.5", "Away Score Over 0.5",
 ]
 
-# These are estimates, not bookmaker prices. The API response and saved card
-# both carry an explicit estimated-price label when these values are used.
+# Pure goal markets (no BTTS) for 2.50 Rollover and time/mix accumulators
+GOAL_MARKETS = [
+    "Over 1.5", "Over 2.5", "Home Over 1.5", "Away Over 1.5",
+    "Home Win + Over 1.5", "Away Win + Over 1.5",
+    "First-Half Over 0.5", "Home Score Over 0.5", "Away Score Over 0.5",
+]
+
 FALLBACK_ODDS = {
     "Over 1.5": 1.32, "Over 2.5": 1.95, "BTTS": 1.85,
     "Home Over 1.5": 1.75, "Away Over 1.5": 2.10,
@@ -249,7 +254,14 @@ def _fixture_to_match(fx, date_str):
     }
 
 
-def build_card(market, candidates, used):
+def _total_odds(items):
+    price = 1.0
+    for item in items:
+        price *= float(item["odds"])
+    return price
+
+
+def build_card(market, candidates, used, min_legs=5, max_legs=8, target_odds=12.0, target_label="12.00+"):
     candidates = sort_status(candidates)
     pool = (
         [c for c in candidates if c.get("fixture_id") not in used]
@@ -257,22 +269,16 @@ def build_card(market, candidates, used):
     )
     legs, seen = [], set()
 
-    def total(items):
-        price = 1.0
-        for item in items:
-            price *= float(item["odds"])
-        return price
-
     for candidate in pool:
         fid = candidate.get("fixture_id")
         if fid is None or fid in seen:
             continue
         legs.append(dict(candidate))
         seen.add(fid)
-        if len(legs) == 5:
+        if len(legs) == min_legs:
             break
 
-    while len(legs) < 8 and legs and total(legs) < 12.0:
+    while len(legs) < max_legs and legs and _total_odds(legs) < target_odds:
         extra = next(
             (dict(c) for c in sorted(pool, key=lambda x: float(x["odds"]), reverse=True)
              if c.get("fixture_id") is not None and c.get("fixture_id") not in seen),
@@ -285,19 +291,105 @@ def build_card(market, candidates, used):
 
     legs = sort_status(legs)
     used.update(x["fixture_id"] for x in legs)
-    combined = total(legs) if legs else 0.0
+    combined = _total_odds(legs) if legs else 0.0
     estimated = any(x.get("fallback_odds") for x in legs)
     return {
         "market": market,
         "legs": legs,
         "legs_count": len(legs),
         "total_odds": round(combined, 2),
-        "target": "12.00+",
-        "meets_target": combined >= 12.0,
+        "target": target_label,
+        "meets_target": combined >= target_odds,
         "status": "PENDING",
         "odds_type": "ESTIMATED_FALLBACK" if estimated else "SUPPLIED",
         "note": "Estimated fallback prices; not verified bookmaker odds" if estimated else "",
     }
+
+
+def _candidate_for_match(match, market):
+    if match.get("fixture_id") is None:
+        return None
+    hs = team_stats(match.get("home_last10", []))
+    aws = team_stats(match.get("away_last10", []))
+    has_stats = bool(hs and aws)
+    if has_stats and not qualifies(market, hs, aws):
+        return None
+    supplied = (match.get("market_odds") or {}).get(market)
+    if supplied is None and match.get("market") == market:
+        supplied = match.get("odds")
+    try:
+        price = float(supplied) if supplied is not None else FALLBACK_ODDS[market]
+    except (TypeError, ValueError):
+        return None
+    if price <= 1.0:
+        return None
+    return {
+        "fixture_id": match["fixture_id"],
+        "home": match.get("home"),
+        "away": match.get("away"),
+        "league": match.get("league"),
+        "kickoff": match.get("kickoff"),
+        "status": match.get("status", "Upcoming"),
+        "odds": price,
+        "market": market,
+        "fallback_odds": supplied is None,
+        "selection_mode": "STATISTICS" if has_stats else "FALLBACK_NO_STATS",
+    }
+
+
+def _kickoff_hour_wat(match):
+    raw = str(match.get("kickoff") or "")
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(LOCAL_TZ).hour
+    except Exception:
+        return 12
+
+
+def _collect_candidates(matches, markets, filter_fn=None):
+    items = []
+    subset = [m for m in matches if filter_fn(m)] if filter_fn else list(matches)
+    for mkt in markets:
+        for match in subset:
+            cand = _candidate_for_match(match, mkt)
+            if cand:
+                items.append(cand)
+    return items
+
+
+def build_extra_cards(matches, used):
+    extra_cards = []
+
+    # 2.50 Rollover: Morning Session (Card 1 & Card 2) + Evening Session (Card 1 & Card 2)
+    morning_250_pool = _collect_candidates(
+        matches, ("Over 1.5", "Home Score Over 0.5", "Away Score Over 0.5"),
+        lambda m: _kickoff_hour_wat(m) < 14,
+    ) or _collect_candidates(matches, ("Over 1.5", "Home Score Over 0.5", "Away Score Over 0.5"))
+
+    evening_250_pool = _collect_candidates(
+        matches, ("Over 1.5", "Home Score Over 0.5", "Away Score Over 0.5"),
+        lambda m: _kickoff_hour_wat(m) >= 14,
+    ) or morning_250_pool
+
+    extra_cards.append(build_card("2.50 Rollover - Morning Card 1", morning_250_pool, used, 2, 4, 2.50, "2.50+"))
+    extra_cards.append(build_card("2.50 Rollover - Morning Card 2", morning_250_pool, used, 2, 4, 2.50, "2.50+"))
+    extra_cards.append(build_card("2.50 Rollover - Evening Card 1", evening_250_pool, used, 2, 4, 2.50, "2.50+"))
+    extra_cards.append(build_card("2.50 Rollover - Evening Card 2", evening_250_pool, used, 2, 4, 2.50, "2.50+"))
+
+    # Early Morning, Morning, Midnight, and Mega Mix Accumulator Cards (pure goal lines, no BTTS)
+    early_morning_pool = _collect_candidates(matches, GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) < 12) or _collect_candidates(matches, GOAL_MARKETS)
+    morning_pool = _collect_candidates(matches, GOAL_MARKETS, lambda m: 6 <= _kickoff_hour_wat(m) < 15) or _collect_candidates(matches, GOAL_MARKETS)
+    midnight_pool = _collect_candidates(matches, GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) >= 21 or _kickoff_hour_wat(m) < 4) or _collect_candidates(matches, GOAL_MARKETS)
+    mega_mix_pool = _collect_candidates(matches, ("Over 2.5", "Over 1.5", "Home Over 1.5", "Away Over 1.5", "Home Win + Over 1.5", "Away Win + Over 1.5"))
+
+    extra_cards.append(build_card("Early Morning Accumulator", early_morning_pool, used, 5, 8, 12.0, "12.00+"))
+    extra_cards.append(build_card("Morning Accumulator", morning_pool, used, 5, 8, 12.0, "12.00+"))
+    extra_cards.append(build_card("Midnight Accumulator", midnight_pool, used, 5, 8, 12.0, "12.00+"))
+    extra_cards.append(build_card("Mega Mix Accumulator", mega_mix_pool, used, 6, 12, 12.0, "12.00+"))
+
+    return extra_cards
 
 
 def build_daily_cards(matches):
@@ -305,35 +397,11 @@ def build_daily_cards(matches):
     for market in MARKETS_12:
         candidates = []
         for match in matches:
-            if match.get("fixture_id") is None:
-                continue
-            hs = team_stats(match.get("home_last10", []))
-            aws = team_stats(match.get("away_last10", []))
-            has_stats = bool(hs and aws)
-            if has_stats and not qualifies(market, hs, aws):
-                continue
-            supplied = (match.get("market_odds") or {}).get(market)
-            if supplied is None and match.get("market") == market:
-                supplied = match.get("odds")
-            try:
-                price = float(supplied) if supplied is not None else FALLBACK_ODDS[market]
-            except (TypeError, ValueError):
-                continue
-            if price <= 1.0:
-                continue
-            candidates.append({
-                "fixture_id": match["fixture_id"],
-                "home": match.get("home"),
-                "away": match.get("away"),
-                "league": match.get("league"),
-                "kickoff": match.get("kickoff"),
-                "status": match.get("status", "Upcoming"),
-                "odds": price,
-                "market": market,
-                "fallback_odds": supplied is None,
-                "selection_mode": "STATISTICS" if has_stats else "FALLBACK_NO_STATS",
-            })
+            cand = _candidate_for_match(match, market)
+            if cand:
+                candidates.append(cand)
         cards.append(build_card(market, candidates, used))
+    cards.extend(build_extra_cards(matches, used))
     return cards
 
 
@@ -343,14 +411,12 @@ def _card_rows(date_str, cards):
         "market": card["market"],
         "legs": json.dumps(card["legs"], separators=(",", ":")),
         "total_odds": card["total_odds"],
-        "target": "12.00+",
+        "target": card.get("target", "12.00+"),
         "result": "PENDING",
     } for card in cards]
 
 
 def _restore_date(table, date_str, rows):
-    # Best-effort rollback if a replacement write fails. Existing rows are
-    # backed up before deletion; do not report a successful build on failure.
     deleted = sb_delete_date(table, date_str)
     if _has_error(deleted):
         return deleted
@@ -366,8 +432,6 @@ def run_daily_build(date_str=None):
     if not valid_date(today):
         return {"ok": False, "error": "Invalid date; expected YYYY-MM-DD"}
 
-    # Never delete or replace stored records unless the fixture API returned
-    # a valid, non-empty slate and at least one usable fixture was parsed.
     fixture_data = af_get(f"/fixtures?date={urllib.parse.quote(today, safe='')}")
     if _has_error(fixture_data):
         return {"ok": False, "error": fixture_data["error"], "records_preserved": True}
@@ -405,8 +469,6 @@ def run_daily_build(date_str=None):
     cards = build_daily_cards(matches)
     cards_to_save = _card_rows(today, cards)
 
-    # Keep a copy of today's saved rows so an unsuccessful replacement can be
-    # rolled back. A read error aborts before any deletion.
     backups = {}
     for table in TABLES:
         old = sb_get(table, f"date=eq.{today}", service=True)
@@ -417,8 +479,6 @@ def run_daily_build(date_str=None):
             }
         backups[table] = old
 
-    # Build standings before touching stored data. A standings API failure is
-    # non-fatal; fixtures and cards remain useful without league tables.
     standing_rows, standing_errors, league_ids = [], [], {}
     for match in matches:
         if match.get("league_id") is not None:
@@ -446,8 +506,6 @@ def run_daily_build(date_str=None):
         "saved_standings": standing_rows,
     }
 
-    # Replace one date. If any deletion or insert fails, restore the backed-up
-    # rows and return an explicit failure; never claim a partial build succeeded.
     for table in TABLES:
         deleted = sb_delete_date(table, today)
         if _has_error(deleted):
@@ -549,7 +607,8 @@ def _read_rows(table, query):
 
 
 def handler(event, context):
-    path = event.get("path", "/")
+    raw_path = event.get("path", "/") or "/"
+    path = raw_path.split("?", 1)[0]
     method = event.get("httpMethod", "GET")
     body = event.get("body") or ""
     query = event.get("queryStringParameters") or {}
@@ -566,7 +625,7 @@ def handler(event, context):
         })
 
     if path == "/api/cron":
-        result = run_daily_build()
+        result = run_daily_build(query.get("date"))
         return _json(result, 200 if result.get("ok") else 503)
 
     if path == "/api/build-cards" and method == "POST":
@@ -642,7 +701,7 @@ def handler(event, context):
         date_str = query.get("date") or local_today()
         if not valid_date(date_str):
             return _json({"error": "Invalid date"}, 400)
-        data = af_get(f"/fixtures?live=all")
+        data = af_get("/fixtures?live=all")
         live = data.get("response", []) if isinstance(data, dict) else []
         return _json({"date": date_str, "live": len(live), "fixtures": live,
                       "source": "api-football - live score update",
