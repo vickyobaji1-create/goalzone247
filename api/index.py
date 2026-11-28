@@ -1,58 +1,88 @@
-# Goalzone247 Backend v7.0 - Vercel + Supabase + requests
-# Daily fixtures, accumulator cards, and standings are stored in Supabase.
-# Live scores use a strict 30-minute Supabase cooldown so visitor refreshes never burn API quota.
-
-import os
-import json
-import time
-import urllib.parse
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from http.server import BaseHTTPRequestHandler
+import json
+import math
+import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
-import requests
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+SUPABASE_ANON_KEY = (os.environ.get("SUPABASE_ANON_KEY") or "").strip()
+SUPABASE_SERVICE_ROLE_KEY = (
+    os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    or os.environ.get("SUPABASE_SERVICE_KEY")
+    or ""
+).strip()
+API_FOOTBALL_KEY = (os.environ.get("API_FOOTBALL_KEY") or "").strip()
+API_FOOTBALL_BASE = (os.environ.get("API_FOOTBALL_BASE") or "https://v3.football.api-sports.io").strip().rstrip("/")
+CRON_SECRET = (os.environ.get("CRON_SECRET") or "").strip()
 
-try:
-    from zoneinfo import ZoneInfo
-    LOCAL_TZ = ZoneInfo("Africa/Lagos")
-except Exception:
-    LOCAL_TZ = timezone(timedelta(hours=1))
+LAGOS_TZ = timezone(timedelta(hours=1))
+LIVE_COOLDOWN_SECONDS = 30 * 60
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
-SUPABASE_ANON = os.environ.get("SUPABASE_ANON_KEY", "").strip()
-SUPABASE_SERVICE = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or SUPABASE_ANON).strip()
-API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY", "").strip()
-HOST = "v3.football.api-sports.io"
-KEEP_DAYS = 10
+MAX_FIXTURES_FETCH = 40
 MAX_STANDINGS_LEAGUES = 12
-LIVE_COOLDOWN_SECONDS = 1800  # 30 minutes strict cooldown
-REQUEST_TIMEOUT = 15
+TOP_TEAMS_PER_LEAGUE = 5
 
-TABLES = ("saved_markets", "saved_cards", "saved_standings")
-
-MARKETS_12 = [
-    "Over 1.5", "Over 2.5", "BTTS", "Home Over 1.5", "Away Over 1.5",
-    "1X + BTTS", "X2 + BTTS", "Home Win + Over 1.5",
-    "Away Win + Over 1.5", "First-Half Over 0.5",
-    "Home Score Over 0.5", "Away Score Over 0.5",
+PRIORITY_LEAGUE_IDS = [
+    39, 140, 135, 78, 61,       # Top 5 European leagues
+    2, 3, 848,                  # UEFA UCL, UEL, UECL
+    88, 94, 144, 203, 179,      # Strong European goal leagues
+    98, 99, 292, 293, 307, 188, # Asia / Australia / Middle East
+    253, 262, 71, 128, 13, 11   # Americas & CONMEBOL
 ]
 
-# Strictly Over 1.5 and Over 2.5 only for 2.50 Rollover cards
-ROLLOVER_250_MARKETS = (
+PRIORITY_LEAGUE_SET = set(PRIORITY_LEAGUE_IDS)
+
+HIGH_SCORING_LEAGUE_IDS = {
+    39, 140, 135, 78, 61, 2, 3, 848, 88, 94, 144, 203, 179,
+    98, 99, 292, 293, 307, 188, 253, 262, 71, 128, 13, 11,
+    40, 41, 141, 136, 79, 62, 89, 95, 218, 197, 207, 103, 113, 119
+}
+
+MARKETS_12 = [
     "Over 1.5",
     "Over 2.5",
-)
-
-# Mixed goal markets for Early Morning, time-window, and Mega Mix accumulators
-MIX_GOAL_MARKETS = (
-    "Over 2.5",
+    "BTTS",
     "Home Over 1.5",
     "Away Over 1.5",
+    "1X + BTTS",
+    "X2 + BTTS",
     "Home Win + Over 1.5",
     "Away Win + Over 1.5",
     "First-Half Over 0.5",
-    "Over 1.5",
-)
+    "Home Score Over 0.5",
+    "Away Score Over 0.5",
+]
 
-FALLBACK_ODDS = {
+ROLLOVER_250_MARKETS = [
+    "Over 1.5",
+    "Home Score Over 0.5",
+    "Away Score Over 0.5",
+    "First-Half Over 0.5",
+    "BTTS",
+    "Over 2.5",
+]
+
+MIX_GOAL_MARKETS = [
+    "Over 1.5",
+    "Over 2.5",
+    "BTTS",
+    "Home Over 1.5",
+    "Away Over 1.5",
+    "1X + BTTS",
+    "X2 + BTTS",
+    "Home Win + Over 1.5",
+    "Away Win + Over 1.5",
+    "First-Half Over 0.5",
+    "Home Score Over 0.5",
+    "Away Score Over 0.5",
+]
+
+DEFAULT_BASE_ODDS = {
     "Over 1.5": 1.24,
     "Over 2.5": 1.72,
     "BTTS": 1.68,
@@ -67,476 +97,420 @@ FALLBACK_ODDS = {
     "Away Score Over 0.5": 1.28,
 }
 
-# Broad global league weightings (Europe, Americas, Asia/Oceania, Continental Cups)
-PRIORITY_LEAGUE_IDS = {
-    # Top European & Continental
-    39: 100,   # Premier League (England)
-    40: 82,    # Championship (England)
-    41: 74,    # League One (England)
-    45: 78,    # FA Cup (England)
-    48: 75,    # EFL Cup (England)
-    140: 98,   # La Liga (Spain)
-    141: 76,   # Segunda División (Spain)
-    143: 75,   # Copa del Rey (Spain)
-    78: 98,    # Bundesliga (Germany)
-    79: 78,    # 2. Bundesliga (Germany)
-    81: 75,    # DFB Pokal (Germany)
-    135: 98,   # Serie A (Italy)
-    136: 75,   # Serie B (Italy)
-    137: 74,   # Coppa Italia (Italy)
-    61: 95,    # Ligue 1 (France)
-    62: 74,    # Ligue 2 (France)
-    2: 97,     # UEFA Champions League
-    3: 90,     # UEFA Europa League
-    848: 82,   # UEFA Conference League
-    # Strong European secondary / midweek-active leagues
-    88: 90,    # Eredivisie (Netherlands)
-    89: 75,    # Eerste Divisie (Netherlands)
-    94: 88,    # Primeira Liga (Portugal)
-    144: 84,   # Jupiler Pro League (Belgium)
-    179: 80,   # Premiership (Scotland)
-    203: 84,   # Süper Lig (Turkey)
-    197: 76,   # Super League 1 (Greece)
-    218: 78,   # Liga I (Romania)
-    106: 76,   # Ekstraklasa (Poland)
-    207: 78,   # Super League (Switzerland)
-    210: 76,   # HNL (Croatia)
-    119: 78,   # Superliga (Denmark)
-    113: 78,   # Allsvenskan (Sweden)
-    103: 78,   # Eliteserien (Norway)
-    # Americas (great for evening & midnight WAT windows + midweek fixtures)
-    71: 90,    # Serie A (Brazil)
-    72: 75,    # Serie B (Brazil)
-    128: 86,   # Liga Profesional (Argentina)
-    253: 84,   # Major League Soccer (USA)
-    262: 82,   # Liga MX (Mexico)
-    13: 88,    # CONMEBOL Libertadores
-    11: 80,    # CONMEBOL Sudamericana
-    # Asia & Oceania (strong morning & early-morning WAT coverage)
-    98: 84,    # J1 League (Japan)
-    99: 74,    # J2 League (Japan)
-    292: 80,   # K League 1 (Korea Republic)
-    188: 78,   # A-League (Australia)
-    169: 74,   # Super League (China)
-    307: 82,   # Pro League (Saudi Arabia)
-}
 
-HIGH_SCORE_KEYWORDS = (
-    "premier", "bundesliga", "eredivisie", "la liga", "serie a", "ligue 1",
-    "championship", "primeira", "super lig", "pro league", "j1", "j2", "k league",
-    "a-league", "mls", "liga mx", "allsvenskan", "eliteserien", "superliga",
-    "champions league", "europa", "libertadores", "sudamericana", "cup",
-)
+def _today_wat():
+    return datetime.now(LAGOS_TZ).date()
 
 
-def local_today():
-    return datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+def _date_str(offset_days=0):
+    return (_today_wat() + timedelta(days=offset_days)).isoformat()
 
 
-def local_tomorrow():
-    return (datetime.now(LOCAL_TZ) + timedelta(days=1)).strftime("%Y-%m-%d")
-
-
-def valid_date(value):
-    try:
-        datetime.strptime(value, "%Y-%m-%d")
-        return True
-    except (TypeError, ValueError):
-        return False
-
-
-def _headers(service=False, prefer=None):
-    key = SUPABASE_SERVICE if service else SUPABASE_ANON
-    result = {
-        "apikey": key,
-        "Authorization": "Bearer " + key,
-        "Content-Type": "application/json",
-    }
-    if prefer:
-        result["Prefer"] = prefer
-    return result
-
-
-def _clean_supabase_url():
-    clean_url = SUPABASE_URL.rstrip("/")
-    if clean_url.endswith("/rest/v1"):
-        clean_url = clean_url[: -len("/rest/v1")]
-    return clean_url
-
-
-def _sb_request(method, table, query="", data=None, service=True, prefer=None):
-    if not SUPABASE_URL:
-        return {"error": "SUPABASE_URL is not configured"}
-    clean_url = _clean_supabase_url()
-    key = SUPABASE_SERVICE if service else SUPABASE_ANON
-    if not key:
-        return {"error": "Supabase key is not configured"}
-    url = f"{clean_url}/rest/v1/{table}"
-    if query:
-        url += "?" + query
-
-    last_err = ""
-    for attempt in range(3):
-        try:
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=_headers(service, prefer),
-                json=data if data is not None else None,
-                timeout=REQUEST_TIMEOUT,
-            )
-            if response.status_code >= 400:
-                return {"error": f"Supabase HTTP {response.status_code}: {response.text}"}
-            if not response.text:
-                return {"ok": True, "status": response.status_code}
-            try:
-                return response.json()
-            except ValueError:
-                return {"ok": True, "body": response.text, "status": response.status_code}
-        except Exception as exc:
-            last_err = str(exc)
-            if attempt < 2:
-                time.sleep(0.4 * (attempt + 1))
-
-    return {"error": last_err}
-
-
-def _has_error(value):
-    return isinstance(value, dict) and bool(value.get("error"))
-
-
-def sb_get(table, query="", service=False):
-    result = _sb_request("GET", table, query, service=service)
-    if isinstance(result, list):
-        return result
-    if _has_error(result):
-        return result
-    return []
-
-
-def sb_post(table, data):
-    if not data:
-        return {"ok": True, "saved": 0}
-    return _sb_request(
-        "POST", table, data=data, service=True, prefer="return=representation"
-    )
-
-
-def sb_patch(table, query, data):
-    return _sb_request(
-        "PATCH", table, query=query, data=data, service=True, prefer="return=minimal"
-    )
-
-
-def sb_delete_date(table, date_str):
-    return _sb_request(
-        "DELETE", table,
-        f"date=eq.{urllib.parse.quote(date_str, safe='')}",
-        service=True, prefer="return=minimal",
-    )
-
-
-def sb_delete_old(table, cutoff_date):
-    return _sb_request(
-        "DELETE", table,
-        f"date=lt.{urllib.parse.quote(cutoff_date, safe='')}",
-        service=True, prefer="return=minimal",
-    )
-
-
-def af_get(path):
-    if not API_FOOTBALL_KEY:
-        return {"response": [], "error": "API_FOOTBALL_KEY is not configured"}
-    last_err = ""
-    for attempt in range(3):
-        try:
-            response = requests.get(
-                f"https://{HOST}{path}",
-                headers={"x-apisports-key": API_FOOTBALL_KEY},
-                timeout=REQUEST_TIMEOUT,
-            )
-            if response.status_code >= 400:
-                return {"response": [], "error": f"API-Football HTTP {response.status_code}: {response.text}"}
-            data = response.json()
-            if not isinstance(data, dict):
-                return {"response": [], "error": "Unexpected API-Football response"}
-            if data.get("errors"):
-                return {"response": [], "error": str(data["errors"])}
-            return data
-        except Exception as exc:
-            last_err = str(exc)
-            if attempt < 2:
-                time.sleep(0.4 * (attempt + 1))
-    return {"response": [], "error": last_err}
-
-
-def team_stats(last10):
-    if not last10:
+def _parse_iso_dt(raw):
+    if not raw:
         return None
-    home_games = [x for x in last10 if x.get("is_home")]
-    away_games = [x for x in last10 if not x.get("is_home")]
-
-    def rate(items, predicate):
-        return sum(1 for item in items if predicate(item)) / max(1, len(items))
-
-    return {
-        "scored1": rate(last10, lambda g: g.get("scored", 0) >= 1),
-        "scored2": rate(last10, lambda g: g.get("scored", 0) >= 2),
-        "conceded1": rate(last10, lambda g: g.get("conceded", 0) >= 1),
-        "avg_goals": sum(g.get("scored", 0) + g.get("conceded", 0) for g in last10) / len(last10),
-        "win_rate": rate(last10, lambda g: bool(g.get("won"))),
-        "loss_rate": rate(last10, lambda g: bool(g.get("lost"))),
-        "fh": rate(last10, lambda g: bool(g.get("scored_first_half"))),
-        "home_scored1": rate(home_games, lambda g: g.get("scored", 0) >= 1),
-        "away_scored1": rate(away_games, lambda g: g.get("scored", 0) >= 1),
-        "home_scored2": rate(home_games, lambda g: g.get("scored", 0) >= 2),
-        "away_scored2": rate(away_games, lambda g: g.get("scored", 0) >= 2),
-    }
+    s = str(raw).strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(LAGOS_TZ)
+    except Exception:
+        return None
 
 
-def qualifies(market, hs, aws):
-    if not hs or not aws:
-        return False
-    total_avg = (hs["avg_goals"] + aws["avg_goals"]) / 2
-    if market == "Over 1.5":
-        return (hs["scored1"] >= .60 and aws["scored1"] >= .50) or total_avg >= 2.2
-    if market == "Over 2.5":
-        return total_avg >= 2.8 and hs["scored1"] >= .70 and aws["scored1"] >= .70
-    if market == "BTTS":
-        return all(x >= .60 for x in (hs["scored1"], aws["scored1"], hs["conceded1"], aws["conceded1"]))
-    if market == "Home Over 1.5":
-        return hs["home_scored1"] >= .75 and hs["home_scored2"] >= .50
-    if market == "Away Over 1.5":
-        return aws["away_scored1"] >= .75 and aws["away_scored2"] >= .50
-    if market == "1X + BTTS":
-        return hs["loss_rate"] <= .20 and qualifies("BTTS", hs, aws)
-    if market == "X2 + BTTS":
-        return aws["loss_rate"] <= .20 and qualifies("BTTS", hs, aws)
-    if market == "Home Win + Over 1.5":
-        return hs["win_rate"] >= .60 and qualifies("Over 1.5", hs, aws)
-    if market == "Away Win + Over 1.5":
-        return aws["win_rate"] >= .50 and qualifies("Over 1.5", hs, aws)
-    if market == "First-Half Over 0.5":
-        return hs["fh"] >= .60 and aws["fh"] >= .60
-    if market == "Home Score Over 0.5":
-        return hs["home_scored1"] >= .70
-    if market == "Away Score Over 0.5":
-        return aws["away_scored1"] >= .70
-    return False
+def _kickoff_epoch(match):
+    dt = _parse_iso_dt(match.get("kickoff") or match.get("date"))
+    return dt.timestamp() if dt else 0.0
 
 
-def _normalise_status(value):
-    val = str(value or "").strip().upper()
-    if val in ("1H", "2H", "HT", "ET", "P", "LIVE", "INT", "IN_PLAY"):
+def _kickoff_hour_wat(match):
+    dt = _parse_iso_dt(match.get("kickoff") or match.get("date"))
+    return dt.hour if dt else 12
+
+
+def _normalise_status(raw):
+    val = str(raw or "").strip().upper()
+    if val in {"LIVE", "1H", "2H", "HT", "ET", "P", "INT", "IN_PLAY"}:
         return "Live"
-    if val in ("FT", "AET", "PEN", "FINISHED", "WON", "LOST"):
+    if val in {"FINISHED", "FT", "AET", "PEN", "WON", "LOST", "LOSS"}:
         return "Finished"
     return "Upcoming"
 
 
-def _kickoff_epoch(raw):
-    if not raw:
-        return 0.0
+def _status_rank(match):
+    st = _normalise_status(match.get("status") or "")
+    res = str(match.get("result") or "").upper()
+    if st == "Upcoming":
+        if any(tok in res for tok in ("1H", "2H", "HT", "ET", "LIVE", "IN_PLAY")):
+            st = "Live"
+        elif any(tok in res for tok in ("FT", "AET", "PEN", "FINISHED")):
+            st = "Finished"
+        else:
+            ko = _kickoff_epoch(match)
+            if ko > 0:
+                diff = time.time() - ko
+                if diff >= 135 * 60:
+                    st = "Finished"
+    return {"Live": 0, "Upcoming": 1, "Finished": 2}.get(st, 1)
+
+
+def sort_status(items):
+    return sorted(items, key=lambda x: (_status_rank(x), _kickoff_epoch(x)))
+
+
+@lru_cache(maxsize=1)
+def _load_html():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base_dir, "index.html"),
+        os.path.join(os.path.dirname(base_dir), "index.html"),
+        "/var/task/index.html",
+        "index.html",
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                return fh.read()
+    return "<!DOCTYPE html><html><body><h1>GOALZONE247</h1><p>index.html not found.</p></body></html>"
+
+
+def _sb_headers(service=False, prefer=None):
+    key = SUPABASE_SERVICE_ROLE_KEY if (service and SUPABASE_SERVICE_ROLE_KEY) else SUPABASE_ANON_KEY
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+def _sb_request(method, table, query="", body=None, service=False, prefer=None):
+    if not SUPABASE_URL:
+        return {"error": "SUPABASE_URL not set"}
+    key = SUPABASE_SERVICE_ROLE_KEY if (service and SUPABASE_SERVICE_ROLE_KEY) else SUPABASE_ANON_KEY
+    if not key:
+        return {"error": "Supabase key not set"}
+
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    if query:
+        url = f"{url}?{query}"
+
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+
+    req = urllib.request.Request(url, data=data, headers=_sb_headers(service=service, prefer=prefer), method=method)
     try:
-        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.timestamp()
-    except Exception:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8")
+            if not raw:
+                return []
+            return json.loads(raw)
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8")[:300]
+        except Exception:
+            pass
+        return {"error": f"Supabase HTTP {exc.code}: {detail}"}
+    except Exception as exc:
+        return {"error": f"Supabase request error: {exc}"}
+
+
+def sb_get(table, query="", service=False):
+    return _sb_request("GET", table, query=query, service=service)
+
+
+def sb_post(table, rows, service=True, prefer="return=representation"):
+    return _sb_request("POST", table, body=rows, service=service, prefer=prefer)
+
+
+def sb_patch(table, query, patch_obj, service=True):
+    return _sb_request("PATCH", table, query=query, body=patch_obj, service=service, prefer="return=minimal")
+
+
+def _has_error(payload):
+    return isinstance(payload, dict) and "error" in payload
+
+
+def af_get(path):
+    if not API_FOOTBALL_KEY:
+        return {"error": "API_FOOTBALL_KEY not set"}
+    url = f"{API_FOOTBALL_BASE}{path}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "x-apisports-key": API_FOOTBALL_KEY,
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8")[:250]
+        except Exception:
+            pass
+        return {"error": f"API-Football HTTP {exc.code}: {detail}"}
+    except Exception as exc:
+        return {"error": f"API-Football error: {exc}"}
+
+
+def _league_performance_score(league_id, country="", league_name=""):
+    score = 0
+    if league_id in PRIORITY_LEAGUE_IDS:
+        idx = PRIORITY_LEAGUE_IDS.index(league_id)
+        score += max(20, 120 - idx * 4)
+    if league_id in HIGH_SCORING_LEAGUE_IDS:
+        score += 35
+    cname = str(country or "").lower()
+    lname = str(league_name or "").lower()
+    if any(k in lname for k in ("u19", "u21", "u23", "reserves", "ii", "b ", "women", "youth")):
+        score -= 25
+    if any(k in cname for k in ("england", "spain", "germany", "italy", "france", "netherlands", "portugal")):
+        score += 10
+    return score
+
+
+def _poisson_prob_at_least(lam, k_min):
+    if lam <= 0:
         return 0.0
+    cdf = 0.0
+    for k in range(0, k_min):
+        cdf += math.exp(-lam) * (lam ** k) / math.factorial(k)
+    return max(0.01, min(0.99, 1.0 - cdf))
 
 
-def sort_status(legs):
-    order = {"Live": 0, "Upcoming": 1, "Finished": 2}
+def _prob_to_odd(prob, margin=0.90):
+    if prob <= 0.03:
+        return 6.50
+    raw = (margin / prob)
+    return round(max(1.08, min(7.50, raw)), 2)
+
+
+def _compute_market_odds(match):
+    league_id = match.get("league_id")
+    is_high = league_id in HIGH_SCORING_LEAGUE_IDS
+    home_lam = 1.68 if is_high else 1.42
+    away_lam = 1.38 if is_high else 1.18
+    total_lam = home_lam + away_lam
+
+    p_o15 = _poisson_prob_at_least(total_lam, 2)
+    p_o25 = _poisson_prob_at_least(total_lam, 3)
+    p_hs05 = _poisson_prob_at_least(home_lam, 1)
+    p_as05 = _poisson_prob_at_least(away_lam, 1)
+    p_ho15 = _poisson_prob_at_least(home_lam, 2)
+    p_ao15 = _poisson_prob_at_least(away_lam, 2)
+    p_btts = max(0.15, min(0.88, p_hs05 * p_as05 * 1.04))
+    p_fh05 = max(0.35, min(0.90, 1.0 - math.exp(-total_lam * 0.42)))
+    p_hw_o15 = max(0.12, min(0.75, p_o15 * 0.56))
+    p_aw_o15 = max(0.10, min(0.70, p_o15 * 0.44))
+    p_1x_btts = max(0.12, min(0.72, p_btts * 0.72))
+    p_x2_btts = max(0.12, min(0.70, p_btts * 0.65))
+
+    return {
+        "Over 1.5": _prob_to_odd(p_o15, 0.92),
+        "Over 2.5": _prob_to_odd(p_o25, 0.90),
+        "BTTS": _prob_to_odd(p_btts, 0.90),
+        "Home Over 1.5": _prob_to_odd(p_ho15, 0.89),
+        "Away Over 1.5": _prob_to_odd(p_ao15, 0.89),
+        "1X + BTTS": _prob_to_odd(p_1x_btts, 0.87),
+        "X2 + BTTS": _prob_to_odd(p_x2_btts, 0.87),
+        "Home Win + Over 1.5": _prob_to_odd(p_hw_o15, 0.88),
+        "Away Win + Over 1.5": _prob_to_odd(p_aw_o15, 0.88),
+        "First-Half Over 0.5": _prob_to_odd(p_fh05, 0.91),
+        "Home Score Over 0.5": _prob_to_odd(p_hs05, 0.93),
+        "Away Score Over 0.5": _prob_to_odd(p_as05, 0.92),
+    }
+
+
+def _fetch_fixtures_for_date(date_str):
+    data = af_get(f"/fixtures?date={urllib.parse.quote(date_str)}")
+    if _has_error(data):
+        return [], data["error"]
+
+    raw_items = data.get("response", []) if isinstance(data, dict) else []
+    scored = []
+    for item in raw_items:
+        fixture = item.get("fixture") or {}
+        league = item.get("league") or {}
+        teams = item.get("teams") or {}
+        goals = item.get("goals") or {}
+        status_obj = fixture.get("status") or {}
+
+        lid = league.get("id")
+        cname = league.get("country") or ""
+        lname = league.get("name") or "League"
+        perf = _league_performance_score(lid, cname, lname)
+
+        home_name = (teams.get("home") or {}).get("name") or "Home"
+        away_name = (teams.get("away") or {}).get("name") or "Away"
+        hg = goals.get("home")
+        ag = goals.get("away")
+        short_st = status_obj.get("short") or "NS"
+        elapsed = status_obj.get("elapsed")
+
+        norm_st = _normalise_status(short_st)
+        score_str = f"{hg} - {ag}" if (hg is not None and ag is not None) else ""
+        if norm_st == "Live" and elapsed is not None and score_str:
+            res_text = f"{score_str} ({short_st} {elapsed}')"
+        elif norm_st == "Finished" and score_str:
+            res_text = f"{score_str} ({short_st})"
+        else:
+            res_text = score_str
+
+        rec = {
+            "fixture_id": fixture.get("id"),
+            "date": date_str,
+            "kickoff": fixture.get("date") or "",
+            "league_id": lid,
+            "season": league.get("season"),
+            "league": lname,
+            "country": cname,
+            "home": home_name,
+            "away": away_name,
+            "home_goals": hg,
+            "away_goals": ag,
+            "score": score_str,
+            "result": res_text,
+            "status": norm_st,
+            "status_short": short_st,
+            "elapsed": elapsed,
+            "_perf": perf,
+        }
+        rec["market_odds"] = _compute_market_odds(rec)
+        scored.append(rec)
+
+    scored.sort(key=lambda r: (-r["_perf"], _kickoff_epoch(r)))
+    selected = scored[:MAX_FIXTURES_FETCH]
+    for item in selected:
+        item.pop("_perf", None)
+    return sort_status(selected), None
+
+
+def _fetch_standings_for_fixtures(fixtures, date_str):
+    seen_leagues = {}
+    for fx in fixtures:
+        lid = fx.get("league_id")
+        season = fx.get("season")
+        lname = fx.get("league") or ""
+        cname = fx.get("country") or ""
+        if lid and season and lid not in seen_leagues:
+            seen_leagues[lid] = {
+                "league_id": int(lid),
+                "season": int(season),
+                "league": lname,
+                "country": cname,
+                "perf": _league_performance_score(lid, cname, lname),
+            }
+
+    ranked_leagues = sorted(seen_leagues.values(), key=lambda x: -x["perf"])[:MAX_STANDINGS_LEAGUES]
+    grouped = {}
+    flat_rows = []
+
+    for lg in ranked_leagues:
+        data = af_get(f"/standings?league={lg['league_id']}&season={lg['season']}")
+        if _has_error(data):
+            continue
+        resp_list = data.get("response", []) if isinstance(data, dict) else []
+        if not resp_list:
+            continue
+        lg_block = (resp_list[0] or {}).get("league") or {}
+        standings_groups = lg_block.get("standings") or []
+        if not standings_groups or not isinstance(standings_groups[0], list):
+            continue
+
+        league_title = lg_block.get("name") or lg["league"]
+        top_rows = []
+        for entry in standings_groups[0][:TOP_TEAMS_PER_LEAGUE]:
+            team_obj = entry.get("team") or {}
+            all_stats = entry.get("all") or {}
+            row = {
+                "date": date_str,
+                "league": league_title,
+                "league_id": lg["league_id"],
+                "position": entry.get("rank"),
+                "team": team_obj.get("name") or "Team",
+                "played": all_stats.get("played"),
+                "points": entry.get("points"),
+            }
+            top_rows.append(row)
+            flat_rows.append(row)
+
+        if top_rows:
+            grouped[league_title] = top_rows
+
+    return grouped, flat_rows
+
+
+def _rank_matches_by_quality(matches):
     return sorted(
-        legs,
-        key=lambda x: (
-            order.get(_normalise_status(x.get("status", "Upcoming")), 1),
-            _kickoff_epoch(x.get("kickoff") or x.get("date")),
+        matches,
+        key=lambda m: (
+            -_league_performance_score(m.get("league_id"), m.get("country"), m.get("league")),
+            _kickoff_epoch(m),
         ),
     )
 
 
-def _league_performance_score(league_id, league_name, fixture_count=1):
-    score = float(PRIORITY_LEAGUE_IDS.get(league_id, 45))
-    name_l = str(league_name or "").lower()
-    if any(kw in name_l for kw in HIGH_SCORE_KEYWORDS):
-        score += 18.0
-    score += min(25.0, max(0, fixture_count - 1) * 3.0)
-    return score
-
-
-def _rank_matches_by_quality(matches):
-    counts = {}
-    for m in matches:
-        lid = m.get("league_id")
-        counts[lid] = counts.get(lid, 0) + 1
-
-    def quality_key(m):
-        lid = m.get("league_id")
-        lg = m.get("league") or ""
-        q_score = _league_performance_score(lid, lg, counts.get(lid, 1))
-        hs = team_stats(m.get("home_last10", []))
-        aws = team_stats(m.get("away_last10", []))
-        if hs and aws:
-            q_score += ((hs["avg_goals"] + aws["avg_goals"]) / 2.0) * 10.0
-        return (-q_score, _kickoff_epoch(m.get("kickoff") or m.get("date")))
-
-    return sorted(matches, key=quality_key)
-
-
-def _fixture_to_match(fx, date_str):
-    fixture = fx.get("fixture") or {}
-    teams = fx.get("teams") or {}
-    league = fx.get("league") or {}
-    goals = fx.get("goals") or {}
-    status_obj = fixture.get("status") or {}
-    status_short = status_obj.get("short", "")
-    elapsed = status_obj.get("elapsed")
-    home = teams.get("home") or {}
-    away = teams.get("away") or {}
-    hg = goals.get("home")
-    ag = goals.get("away")
-    score_str = f"{hg} - {ag}" if hg is not None and ag is not None else None
-    lid = league.get("id")
-    lname = league.get("name")
-    norm_status = _normalise_status(status_short)
-    result_payload = score_str or status_short or "NS"
-    if norm_status == "Live" and elapsed is not None:
-        result_payload = f"{score_str or '0 - 0'} ({status_short} {elapsed}')"
-    return {
-        "date": date_str,
-        "market": "fixture",
-        "fixture_id": fixture.get("id"),
-        "home": home.get("name"),
-        "away": away.get("name"),
-        "country": league.get("country") or "",
-        "league": lname,
-        "league_id": lid,
-        "league_score": _league_performance_score(lid, lname),
-        "kickoff": fixture.get("date"),
-        "elapsed": elapsed,
-        "status_short": status_short or "NS",
-        "home_goals": hg,
-        "away_goals": ag,
-        "score": score_str,
-        "odds": None,
-        "result": result_payload,
-        "status": norm_status,
-    }
-
-
-def _total_odds(items):
-    price = 1.0
-    for item in items:
-        price *= float(item["odds"])
-    return price
-
-
-def build_card(market, candidates, used, min_legs=5, max_legs=8, target_odds=12.0, target_label="12.00+"):
-    candidates = sort_status(candidates)
-    # Prefer unused fixtures first, then allow reuse of strong candidates if needed so cards stay full
-    pool = (
-        [c for c in candidates if c.get("fixture_id") not in used]
-        + [c for c in candidates if c.get("fixture_id") in used]
-    )
-    legs, seen_pairs, seen_fixtures = [], set(), set()
-
-    for candidate in pool:
-        fid = candidate.get("fixture_id")
-        mkt = candidate.get("market") or market
-        pair_key = (fid, mkt)
-        if fid is None or pair_key in seen_pairs or fid in seen_fixtures:
-            continue
-        legs.append(dict(candidate))
-        seen_pairs.add(pair_key)
-        seen_fixtures.add(fid)
-        if len(legs) >= min_legs and _total_odds(legs) >= target_odds:
-            break
-
-    while len(legs) < max_legs and _total_odds(legs) < target_odds:
-        extra = next(
-            (dict(c) for c in sorted(pool, key=lambda x: float(x["odds"]), reverse=True)
-             if c.get("fixture_id") is not None
-             and (c.get("fixture_id"), c.get("market") or market) not in seen_pairs),
-            None,
-        )
-        if extra is None:
-            break
-        legs.append(extra)
-        seen_pairs.add((extra["fixture_id"], extra.get("market") or market))
-
-    legs = sort_status(legs)
-    used.update(x["fixture_id"] for x in legs if x.get("fixture_id") is not None)
-    combined = _total_odds(legs) if legs else 0.0
-    estimated = any(x.get("fallback_odds") for x in legs)
-    return {
-        "market": market,
-        "legs": legs,
-        "legs_count": len(legs),
-        "total_odds": round(combined, 2),
-        "target": target_label,
-        "meets_target": combined >= target_odds,
-        "status": "PENDING",
-        "odds_type": "ESTIMATED_FALLBACK" if estimated else "SUPPLIED",
-        "note": "Estimated fallback prices; not verified bookmaker odds" if estimated else "",
-    }
-
-
 def _candidate_for_match(match, market):
-    if match.get("fixture_id") is None:
-        return None
-    hs = team_stats(match.get("home_last10", []))
-    aws = team_stats(match.get("away_last10", []))
-    has_stats = bool(hs and aws)
-    if has_stats and not qualifies(market, hs, aws):
-        return None
-    supplied = (match.get("market_odds") or {}).get(market)
-    if supplied is None and match.get("market") == market:
-        supplied = match.get("odds")
-    try:
-        price = float(supplied) if supplied is not None else FALLBACK_ODDS[market]
-    except (TypeError, ValueError):
-        return None
-    if price <= 1.0:
-        return None
+    odds_map = match.get("market_odds") or {}
+    odd_val = odds_map.get(market)
+    if odd_val is None:
+        odd_val = DEFAULT_BASE_ODDS.get(market, 1.50)
     return {
-        "fixture_id": match["fixture_id"],
-        "home": match.get("home"),
-        "away": match.get("away"),
-        "country": match.get("country") or "",
-        "league": match.get("league"),
-        "kickoff": match.get("kickoff"),
-        "elapsed": match.get("elapsed"),
-        "status_short": match.get("status_short", ""),
+        "fixture_id": match.get("fixture_id"),
+        "teams": f"{match.get('home', 'Home')} vs {match.get('away', 'Away')}",
+        "home": match.get("home", "Home"),
+        "away": match.get("away", "Away"),
+        "country": match.get("country", ""),
+        "league": match.get("league", "Football"),
+        "kickoff": match.get("kickoff", ""),
+        "market": market,
+        "odds": round(float(odd_val), 2),
+        "status": match.get("status", "Upcoming"),
+        "score": match.get("score", ""),
         "home_goals": match.get("home_goals"),
         "away_goals": match.get("away_goals"),
-        "score": match.get("score"),
-        "status": _normalise_status(match.get("status", "Upcoming")),
-        "odds": price,
-        "market": market,
-        "fallback_odds": supplied is None,
-        "selection_mode": "STATISTICS" if has_stats else "FALLBACK_NO_STATS",
     }
 
 
-def _kickoff_hour_wat(match):
-    raw = str(match.get("kickoff") or "")
-    try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(LOCAL_TZ).hour
-    except Exception:
-        return 12
+def _is_early_morning_wat(match):
+    h = _kickoff_hour_wat(match)
+    return 0 <= h < 7
 
 
-def _collect_window_candidates(matches, markets, window_fn):
-    """Prioritize matches inside the requested WAT time window, then pad with top-ranked global matches."""
-    ranked = _rank_matches_by_quality(matches)
+def _is_morning_wat(match):
+    h = _kickoff_hour_wat(match)
+    return 7 <= h < 12
+
+
+def _is_midnight_wat(match):
+    h = _kickoff_hour_wat(match)
+    return h >= 22 or h < 4
+
+
+def _is_rollover_morning_wat(match):
+    return _kickoff_hour_wat(match) < 14
+
+
+def _is_rollover_evening_wat(match):
+    return _kickoff_hour_wat(match) >= 14
+
+
+def _collect_window_candidates(matches, markets, window_fn, strict_window=False):
+    """Collect candidates from the requested WAT window; spill outside only when not strict_window."""
+    ranked = sort_status(_rank_matches_by_quality(matches))
     in_window = [m for m in ranked if window_fn(m)]
-    outside_window = [m for m in ranked if not window_fn(m)]
-    ordered = in_window + outside_window
+    ordered = in_window if strict_window else (in_window + [m for m in ranked if not window_fn(m)])
 
     per_market = []
     for mkt in markets:
@@ -554,17 +528,55 @@ def _collect_window_candidates(matches, markets, window_fn):
         for bucket in per_market:
             if idx < len(bucket):
                 mixed.append(bucket[idx])
-    return mixed
+    return sort_status(mixed)
+
+
+def build_card(title, pool, used, min_legs, max_legs, min_total_odds, target_label):
+    if not pool:
+        return {
+            "market": title,
+            "legs": [],
+            "total_odds": 0.0,
+            "target": target_label,
+            "result": "PENDING",
+        }
+
+    unused_pool = [c for c in pool if c.get("fixture_id") not in used]
+    fallback_pool = [c for c in pool if c.get("fixture_id") in used]
+    ordered = unused_pool + fallback_pool
+
+    chosen = []
+    prod = 1.0
+    for cand in ordered:
+        if len(chosen) >= max_legs:
+            break
+        chosen.append(cand)
+        prod *= float(cand.get("odds") or 1.0)
+        if len(chosen) >= min_legs and prod >= min_total_odds:
+            break
+
+    for leg in chosen:
+        if leg.get("fixture_id") is not None:
+            used.add(leg["fixture_id"])
+
+    sorted_legs = sort_status(chosen)
+    return {
+        "market": title,
+        "legs": sorted_legs,
+        "total_odds": round(prod, 2) if sorted_legs else 0.0,
+        "target": target_label,
+        "result": "PENDING",
+    }
 
 
 def build_extra_cards(matches, used):
     extra_cards = []
 
     morning_250_pool = _collect_window_candidates(
-        matches, ROLLOVER_250_MARKETS, lambda m: _kickoff_hour_wat(m) < 14
+        matches, ROLLOVER_250_MARKETS, _is_rollover_morning_wat, strict_window=True
     )
     evening_250_pool = _collect_window_candidates(
-        matches, ROLLOVER_250_MARKETS, lambda m: _kickoff_hour_wat(m) >= 14
+        matches, ROLLOVER_250_MARKETS, _is_rollover_evening_wat, strict_window=True
     )
 
     extra_cards.append(build_card("2.50 Rollover - Morning Card 1", morning_250_pool, used, 2, 4, 2.50, "2.50+"))
@@ -573,16 +585,16 @@ def build_extra_cards(matches, used):
     extra_cards.append(build_card("2.50 Rollover - Evening Card 2", evening_250_pool, used, 2, 4, 2.50, "2.50+"))
 
     early_morning_pool = _collect_window_candidates(
-        matches, MIX_GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) < 12
+        matches, MIX_GOAL_MARKETS, _is_early_morning_wat, strict_window=True
     )
     morning_pool = _collect_window_candidates(
-        matches, MIX_GOAL_MARKETS, lambda m: 6 <= _kickoff_hour_wat(m) < 15
+        matches, MIX_GOAL_MARKETS, _is_morning_wat, strict_window=True
     )
     midnight_pool = _collect_window_candidates(
-        matches, MIX_GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) >= 21 or _kickoff_hour_wat(m) < 4
+        matches, MIX_GOAL_MARKETS, _is_midnight_wat, strict_window=True
     )
     mega_mix_pool = _collect_window_candidates(
-        matches, MIX_GOAL_MARKETS, lambda m: True
+        matches, MIX_GOAL_MARKETS, lambda m: True, strict_window=False
     )
 
     extra_cards.append(build_card("Early Morning Accumulator", early_morning_pool, used, 5, 7, 12.0, "12.00+"))
@@ -594,268 +606,153 @@ def build_extra_cards(matches, used):
     return extra_cards
 
 
-def build_daily_cards(matches):
-    ranked_matches = _rank_matches_by_quality(matches)
-    used, cards = set(), []
-    for market in MARKETS_12:
-        candidates = []
-        for match in ranked_matches:
-            cand = _candidate_for_match(match, market)
+def build_all_cards(matches):
+    ranked = sort_status(_rank_matches_by_quality(matches))
+    used = set()
+    cards = []
+
+    for mkt in MARKETS_12:
+        pool = []
+        for match in ranked:
+            cand = _candidate_for_match(match, mkt)
             if cand:
-                candidates.append(cand)
-        cards.append(build_card(market, candidates, used))
-    cards.extend(build_extra_cards(ranked_matches, used))
+                pool.append(cand)
+        cards.append(build_card(mkt, pool, used, 5, 8, 12.0, "12.00+"))
+
+    cards.extend(build_extra_cards(matches, used))
     return cards
 
 
-def _card_rows(date_str, cards):
-    return [{
-        "date": date_str,
-        "market": card["market"],
-        "legs": json.dumps(card["legs"], separators=(",", ":")),
-        "total_odds": card["total_odds"],
-        "target": card.get("target", "12.00+"),
-        "result": "PENDING",
-    } for card in cards]
+def _persist_date_snapshot(date_str, matches, cards, standings_flat):
+    safe_date = urllib.parse.quote(date_str, safe="")
+    _sb_request("DELETE", "saved_markets", f"date=eq.{safe_date}", service=True, prefer="return=minimal")
+    _sb_request("DELETE", "saved_cards", f"date=eq.{safe_date}", service=True, prefer="return=minimal")
+    _sb_request("DELETE", "saved_standings", f"date=eq.{safe_date}", service=True, prefer="return=minimal")
+
+    market_rows = []
+    for m in matches:
+        odds_map = m.get("market_odds") or {}
+        market_rows.append({
+            "date": date_str,
+            "market": "fixture",
+            "home": m.get("home"),
+            "away": m.get("away"),
+            "league": m.get("league"),
+            "kickoff": m.get("kickoff"),
+            "odds": odds_map.get("Over 1.5"),
+            "result": m.get("result") or m.get("status") or "",
+        })
+        for mkt_name, odd_val in odds_map.items():
+            market_rows.append({
+                "date": date_str,
+                "market": mkt_name,
+                "home": m.get("home"),
+                "away": m.get("away"),
+                "league": m.get("league"),
+                "kickoff": m.get("kickoff"),
+                "odds": odd_val,
+                "result": m.get("result") or m.get("status") or "",
+            })
+
+    card_rows = []
+    for c in cards:
+        card_rows.append({
+            "date": date_str,
+            "market": c.get("market"),
+            "legs": json.dumps(c.get("legs") or [], separators=(",", ":")),
+            "total_odds": c.get("total_odds"),
+            "target": c.get("target", "12.00+"),
+            "result": c.get("result", "PENDING"),
+        })
+
+    if market_rows:
+        sb_post("saved_markets", market_rows, service=True, prefer="return=minimal")
+    if card_rows:
+        sb_post("saved_cards", card_rows, service=True, prefer="return=minimal")
+    if standings_flat:
+        sb_post("saved_standings", standings_flat, service=True, prefer="return=minimal")
 
 
-def _restore_date(table, date_str, rows):
-    deleted = sb_delete_date(table, date_str)
-    if _has_error(deleted):
-        return deleted
-    if rows:
-        restored = sb_post(table, rows)
-        if _has_error(restored):
-            return {"error": "Rollback restore failed", "detail": restored}
-    return {"ok": True}
+def _load_saved_date_data(date_str):
+    safe_date = urllib.parse.quote(date_str, safe="")
+    market_rows = sb_get("saved_markets", f"date=eq.{safe_date}&order=id.asc", service=False)
+    card_rows = sb_get("saved_cards", f"date=eq.{safe_date}&order=id.asc", service=False)
+    standing_rows = sb_get("saved_standings", f"date=eq.{safe_date}&order=position.asc", service=False)
 
+    if _has_error(market_rows) and _has_error(card_rows):
+        return None, None, None, market_rows.get("error") or card_rows.get("error")
 
-def _fetch_standings_for_matches(matches, date_str, already_fetched_leagues=None):
-    standing_rows, standing_errors, league_meta = [], [], {}
-    skip_ids = set(already_fetched_leagues or ())
-    for match in matches:
-        lid = match.get("league_id")
-        if lid is not None and lid not in skip_ids:
-            existing = league_meta.get(lid)
-            cnt = (existing["count"] + 1) if existing else 1
-            lname = match.get("league")
-            league_meta[lid] = {
-                "name": lname,
-                "count": cnt,
-                "score": _league_performance_score(lid, lname, cnt),
-            }
+    matches_map = {}
+    if isinstance(market_rows, list):
+        for r in market_rows:
+            if not isinstance(r, dict):
+                continue
+            mkt = r.get("market") or ""
+            if mkt == "live_cache":
+                continue
+            key = f"{r.get('kickoff') or ''}|{r.get('home') or ''}|{r.get('away') or ''}"
+            if key not in matches_map:
+                matches_map[key] = {
+                    "date": r.get("date") or date_str,
+                    "kickoff": r.get("kickoff") or "",
+                    "league": r.get("league") or "Football",
+                    "country": "",
+                    "home": r.get("home") or "Home",
+                    "away": r.get("away") or "Away",
+                    "result": r.get("result") or "",
+                    "status": _normalise_status(r.get("result") or ""),
+                    "market_odds": {},
+                }
+            if mkt == "fixture":
+                matches_map[key]["result"] = r.get("result") or matches_map[key]["result"]
+                matches_map[key]["status"] = _normalise_status(r.get("result") or "")
+            elif mkt in MARKETS_12 and r.get("odds") is not None:
+                matches_map[key]["market_odds"][mkt] = r.get("odds")
 
-    ranked_leagues = sorted(
-        league_meta.items(),
-        key=lambda kv: kv[1]["score"],
-        reverse=True,
-    )[:MAX_STANDINGS_LEAGUES]
+    matches = sort_status(list(matches_map.values()))
 
-    season = int(date_str[:4])
-    fetched_ids = set()
-    for league_id, info in ranked_leagues:
-        league_name = info["name"]
-        response = af_get(f"/standings?league={league_id}&season={season}")
-        if _has_error(response):
-            standing_errors.append(response["error"])
-            continue
-        try:
-            groups = response.get("response", [])[0]["league"]["standings"][0][:5]
-            for row in groups:
-                standing_rows.append({
-                    "date": date_str,
-                    "league": league_name,
-                    "league_id": league_id,
-                    "position": row["rank"],
-                    "team": row["team"]["name"],
-                    "played": row["all"]["played"],
-                    "points": row["points"],
-                })
-            fetched_ids.add(league_id)
-        except (IndexError, KeyError, TypeError):
-            continue
+    cards = []
+    if isinstance(card_rows, list):
+        for c in card_rows:
+            if not isinstance(c, dict):
+                continue
+            raw_legs = c.get("legs")
+            if isinstance(raw_legs, str):
+                try:
+                    raw_legs = json.loads(raw_legs)
+                except Exception:
+                    raw_legs = []
+            if not isinstance(raw_legs, list):
+                raw_legs = []
+            cards.append({
+                "market": c.get("market") or "",
+                "legs": sort_status(raw_legs),
+                "total_odds": c.get("total_odds"),
+                "target": c.get("target") or "12.00+",
+                "result": c.get("result") or "PENDING",
+            })
 
-    return standing_rows, standing_errors, fetched_ids
+    standings_grouped = {}
+    if isinstance(standing_rows, list):
+        for s in standing_rows:
+            if not isinstance(s, dict):
+                continue
+            lg = s.get("league") or "League"
+            standings_grouped.setdefault(lg, []).append({
+                "position": s.get("position"),
+                "team": s.get("team") or "Team",
+                "played": s.get("played"),
+                "points": s.get("points"),
+            })
 
-
-def _build_single_day(target_date, skip_standings_leagues=None):
-    fixture_data = af_get(f"/fixtures?date={urllib.parse.quote(target_date, safe='')}")
-    if _has_error(fixture_data):
-        return {"ok": False, "error": fixture_data["error"], "records_preserved": True}
-    fixtures = fixture_data.get("response")
-    if not isinstance(fixtures, list) or not fixtures:
-        return {
-            "ok": False,
-            "error": f"API-Football returned no fixtures for {target_date}; existing records preserved",
-            "records_preserved": True,
-            "fixtures_fetched": 0,
-        }
-
-    matches = []
-    for fixture in fixtures:
-        try:
-            match = _fixture_to_match(fixture, target_date)
-            if match["fixture_id"] and match["home"] and match["away"] and match["kickoff"]:
-                matches.append(match)
-        except Exception:
-            continue
-    if not matches:
-        return {
-            "ok": False,
-            "error": f"No valid fixtures could be parsed for {target_date}",
-            "records_preserved": True,
-            "fixtures_fetched": len(fixtures),
-        }
-
-    ranked_matches = _rank_matches_by_quality(matches)
-    match_rows = [{
-        "date": target_date, "market": "fixture", "home": m["home"], "away": m["away"],
-        "league": m["league"], "kickoff": m["kickoff"], "odds": None,
-        "result": m["result"],
-    } for m in ranked_matches]
-
-    cards = build_daily_cards(ranked_matches)
-    cards_to_save = _card_rows(target_date, cards)
-    standing_rows, standing_errors, fetched_league_ids = _fetch_standings_for_matches(
-        ranked_matches, target_date, skip_standings_leagues
-    )
-
-    backups = {}
-    for table in TABLES:
-        old = sb_get(table, f"date=eq.{target_date}", service=True)
-        if _has_error(old):
-            return {
-                "ok": False, "error": f"Could not back up {table}: {old['error']}",
-                "records_preserved": True,
-            }
-        backups[table] = old
-
-    new_rows = {
-        "saved_markets": match_rows,
-        "saved_cards": cards_to_save,
-        "saved_standings": standing_rows,
-    }
-
-    for table in TABLES:
-        deleted = sb_delete_date(table, target_date)
-        if _has_error(deleted):
-            for restore_table in TABLES:
-                _restore_date(restore_table, target_date, backups[restore_table])
-            return {"ok": False, "error": f"Could not clear old {table} rows", "detail": deleted,
-                    "rollback_attempted": True}
-
-    save_errors = {}
-    for table in TABLES:
-        saved = sb_post(table, new_rows[table])
-        if _has_error(saved):
-            save_errors[table] = saved["error"]
-    if save_errors:
-        rollback = {
-            table: _restore_date(table, target_date, backups[table])
-            for table in TABLES
-        }
-        return {
-            "ok": False, "error": "Supabase save failed; previous rows were restored",
-            "save_errors": save_errors, "rollback": rollback,
-        }
-
-    return {
-        "ok": True,
-        "date": target_date,
-        "fixtures_fetched": len(fixtures),
-        "fixtures_saved": len(match_rows),
-        "cards_built": len(cards),
-        "cards_saved": len(cards_to_save),
-        "cards": cards,
-        "ranked_matches": ranked_matches,
-        "standings_saved": len(standing_rows),
-        "standings_errors": standing_errors,
-        "fetched_league_ids": list(fetched_league_ids),
-    }
-
-
-def run_daily_build(date_str=None, include_tomorrow=True):
-    today = date_str or local_today()
-    if not valid_date(today):
-        return {"ok": False, "error": "Invalid date; expected YYYY-MM-DD"}
-
-    today_build = _build_single_day(today)
-    if not today_build.get("ok"):
-        return today_build
-
-    tomorrow_summary = None
-    if not date_str and include_tomorrow:
-        tmr = local_tomorrow()
-        tmr_build = _build_single_day(tmr, skip_standings_leagues=today_build.get("fetched_league_ids"))
-        tomorrow_summary = {
-            "date": tmr,
-            "ok": bool(tmr_build.get("ok")),
-            "fixtures_saved": tmr_build.get("fixtures_saved", 0),
-            "cards_saved": tmr_build.get("cards_saved", 0),
-            "standings_saved": tmr_build.get("standings_saved", 0),
-            "error": tmr_build.get("error"),
-        }
-
-    cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
-    cleanup = {table: sb_delete_old(table, cutoff) for table in TABLES}
-    cleanup_errors = {k: v for k, v in cleanup.items() if _has_error(v)}
-
-    return {
-        "ok": True,
-        "date": today,
-        "fetch_time": "00:00 Africa/Lagos (Vercel cron at 23:00 UTC)",
-        "fixtures_fetched": today_build["fixtures_fetched"],
-        "fixtures_saved": today_build["fixtures_saved"],
-        "cards_built": today_build["cards_built"],
-        "cards_saved": today_build["cards_saved"],
-        "cards": today_build["cards"],
-        "tomorrow": tomorrow_summary,
-        "standings_saved": today_build["standings_saved"],
-        "standings_errors": today_build["standings_errors"],
-        "kept_days": KEEP_DAYS,
-        "deleted_before": cutoff,
-        "cleanup_errors": cleanup_errors,
-    }
-
-
-def win_lose(market, hg, ag, fh_h=None, fh_a=None):
-    if hg is None or ag is None:
-        return "PENDING"
-    total = hg + ag
-    btts = hg >= 1 and ag >= 1
-    if market == "Over 1.5":
-        return "WON" if total >= 2 else "LOST"
-    if market == "Over 2.5":
-        return "WON" if total >= 3 else "LOST"
-    if market == "BTTS":
-        return "WON" if btts else "LOST"
-    if market == "Home Over 1.5":
-        return "WON" if hg >= 2 else "LOST"
-    if market == "Away Over 1.5":
-        return "WON" if ag >= 2 else "LOST"
-    if market == "Home Score Over 0.5":
-        return "WON" if hg >= 1 else "LOST"
-    if market == "Away Score Over 0.5":
-        return "WON" if ag >= 1 else "LOST"
-    if market == "First-Half Over 0.5":
-        if fh_h is None or fh_a is None:
-            return "PENDING"
-        return "WON" if fh_h + fh_a >= 1 else "LOST"
-    if market == "Home Win + Over 1.5":
-        return "WON" if hg > ag and total >= 2 else "LOST"
-    if market == "Away Win + Over 1.5":
-        return "WON" if ag > hg and total >= 2 else "LOST"
-    if market == "1X + BTTS":
-        return "WON" if hg >= ag and btts else "LOST"
-    if market == "X2 + BTTS":
-        return "WON" if ag >= hg and btts else "LOST"
-    return "PENDING"
+    return matches, cards, standings_grouped, None
 
 
 def _sync_live_scores_with_cooldown(date_str):
     """Fetch live scores at most once every 30 minutes and persist to Supabase."""
     now_ts = time.time()
-    cache_rows = sb_get("saved_markets", f"date=eq.{date_str}&market=eq.live_cache&limit=1", service=True)
+    safe_date = urllib.parse.quote(date_str, safe="")
+    cache_rows = sb_get("saved_markets", f"date=eq.{safe_date}&market=eq.live_cache&limit=1", service=True)
     cached_row = cache_rows[0] if isinstance(cache_rows, list) and cache_rows else None
 
     if cached_row and cached_row.get("result"):
@@ -904,6 +801,8 @@ def _sync_live_scores_with_cooldown(date_str):
         short_st = status_obj.get("short") or "LIVE"
         elapsed = status_obj.get("elapsed")
         score_str = f"{hg} - {ag}" if hg is not None and ag is not None else short_st
+        norm_st = _normalise_status(short_st)
+        result_label = f"{score_str} ({short_st} {elapsed}')" if (norm_st == "Live" and elapsed is not None) else score_str
         entry = {
             "fixture_id": fid,
             "home": home,
@@ -911,31 +810,39 @@ def _sync_live_scores_with_cooldown(date_str):
             "home_goals": hg,
             "away_goals": ag,
             "score": score_str,
+            "result": result_label,
             "status_short": short_st,
             "elapsed": elapsed,
-            "status": _normalise_status(short_st),
+            "status": norm_st,
         }
         compact_items.append(entry)
         if fid is not None:
             by_fid[fid] = entry
         if home and away:
-            by_pair[f"{home.lower()} vs {away.lower()}"] = entry
+            by_pair[f"{home.lower().strip()} vs {away.lower().strip()}"] = entry
 
-    cards_rows = sb_get("saved_cards", f"date=eq.{date_str}", service=True)
+    def _find_live_hit(obj):
+        fid = obj.get("fixture_id")
+        if fid is not None and fid in by_fid:
+            return by_fid[fid]
+        pair_key = f"{str(obj.get('home', '')).lower().strip()} vs {str(obj.get('away', '')).lower().strip()}"
+        return by_pair.get(pair_key)
+
+    cards_rows = sb_get("saved_cards", f"date=eq.{safe_date}", service=True)
     if isinstance(cards_rows, list) and compact_items:
         for row in cards_rows:
             row_id = row.get("id")
             if not row_id:
                 continue
             try:
-                legs = json.loads(row.get("legs") or "[]")
+                legs = json.loads(row.get("legs") or "[]") if isinstance(row.get("legs"), str) else (row.get("legs") or [])
             except Exception:
                 continue
             changed = False
             for leg in legs:
-                hit = by_fid.get(leg.get("fixture_id")) or by_pair.get(
-                    f"{str(leg.get('home', '')).lower()} vs {str(leg.get('away', '')).lower()}"
-                )
+                if not isinstance(leg, dict):
+                    continue
+                hit = _find_live_hit(leg)
                 if hit:
                     leg["home_goals"] = hit["home_goals"]
                     leg["away_goals"] = hit["away_goals"]
@@ -947,9 +854,19 @@ def _sync_live_scores_with_cooldown(date_str):
             if changed:
                 sb_patch("saved_cards", f"id=eq.{row_id}", {"legs": json.dumps(legs, separators=(",", ":"))})
 
+    fixture_rows = sb_get("saved_markets", f"date=eq.{safe_date}&market=eq.fixture", service=True)
+    if isinstance(fixture_rows, list) and compact_items:
+        for frow in fixture_rows:
+            fid_row = frow.get("id")
+            if not fid_row:
+                continue
+            hit = _find_live_hit(frow)
+            if hit:
+                sb_patch("saved_markets", f"id=eq.{fid_row}", {"result": hit["result"]})
+
     _sb_request(
         "DELETE", "saved_markets",
-        f"date=eq.{date_str}&market=eq.live_cache",
+        f"date=eq.{safe_date}&market=eq.live_cache",
         service=True, prefer="return=minimal",
     )
     sb_post("saved_markets", [{
@@ -973,189 +890,120 @@ def _sync_live_scores_with_cooldown(date_str):
     }
 
 
-def _json(data, status=200):
+def _run_cron_for_date(date_str):
+    matches, fx_err = _fetch_fixtures_for_date(date_str)
+    if fx_err:
+        return {"date": date_str, "ok": False, "error": fx_err}
+
+    standings_grouped, standings_flat = _fetch_standings_for_fixtures(matches, date_str)
+    cards = build_all_cards(matches)
+    _persist_date_snapshot(date_str, matches, cards, standings_flat)
+
     return {
-        "statusCode": status,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type,Authorization",
-        },
-        "body": json.dumps(data, default=str),
+        "date": date_str,
+        "ok": True,
+        "fixtures_saved": len(matches),
+        "cards_saved": len(cards),
+        "standings_leagues_saved": len(standings_grouped),
     }
 
 
-def _read_rows(table, query):
-    result = sb_get(table, query)
-    if _has_error(result):
-        return None, result["error"]
-    return result, None
+class handler(BaseHTTPRequestHandler):
+    def _send_json(self, code, payload):
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
+    def _send_html(self, code, html_str):
+        body = html_str.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
-def handler(event, context):
-    raw_path = event.get("path", "/") or "/"
-    path = raw_path.split("?", 1)[0]
-    method = event.get("httpMethod", "GET")
-    body = event.get("body") or ""
-    query = event.get("queryStringParameters") or {}
+    def log_message(self, format, *args):
+        return
 
-    if method == "OPTIONS":
-        return _json({"ok": True})
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        qs = urllib.parse.parse_qs(parsed.query)
 
-    if path == "/api/health":
-        return _json({
-            "ok": True, "timezone": "Africa/Lagos", "keep_days": KEEP_DAYS,
-            "live_cooldown_minutes": LIVE_COOLDOWN_SECONDS // 60,
-            "supabase_configured": bool(SUPABASE_URL and SUPABASE_SERVICE),
-            "api_key_configured": bool(API_FOOTBALL_KEY),
-            "markets": len(MARKETS_12),
-        })
+        if path in {"/", "/index.html"}:
+            self._send_html(200, _load_html())
+            return
 
-    if path == "/api/cron":
-        target_date = query.get("date")
-        include_tmr = str(query.get("tomorrow", "1")).lower() not in ("0", "false", "no")
-        result = run_daily_build(target_date, include_tomorrow=include_tmr)
-        return _json(result, 200 if result.get("ok") else 503)
+        if path == "/api/today":
+            req_date = (qs.get("date") or [_date_str(0)])[0]
+            matches, cards, standings, err = _load_saved_date_data(req_date)
+            if err and matches is None:
+                self._send_json(500, {"date": req_date, "matches": [], "cards": [], "standings": {}, "error": err})
+                return
+            self._send_json(200, {
+                "date": req_date,
+                "matches": matches or [],
+                "cards": cards or [],
+                "standings": standings or {},
+                "source": "supabase",
+            })
+            return
 
-    if path == "/api/build-cards" and method == "POST":
-        try:
-            payload = json.loads(body) if body else {}
-        except ValueError:
-            return _json({"error": "Invalid JSON body"}, 400)
-        date_str = payload.get("date") or local_today()
-        matches = payload.get("matches")
-        if not valid_date(date_str) or not isinstance(matches, list) or not matches:
-            return _json({"error": "A valid date and non-empty matches array are required"}, 400)
-        cards = build_daily_cards(matches)
-        saved = _save_cards_for_route(date_str, cards)
-        if _has_error(saved):
-            return _json({"ok": False, "error": saved["error"]}, 503)
-        return _json({"ok": True, "date": date_str, "cards_built": len(cards),
-                      "saved": saved, "cards": cards})
+        if path == "/api/standings":
+            req_date = (qs.get("date") or [_date_str(0)])[0]
+            _, _, standings, err = _load_saved_date_data(req_date)
+            if err:
+                self._send_json(500, {"date": req_date, "standings": {}, "error": err})
+                return
+            self._send_json(200, {
+                "date": req_date,
+                "standings": standings or {},
+                "source": "supabase",
+            })
+            return
 
-    if path == "/api/history":
-        date_str = query.get("date")
-        if date_str:
-            if not valid_date(date_str):
-                return _json({"error": "Invalid date"}, 400)
-            safe = urllib.parse.quote(date_str, safe="")
-            cards, err1 = _read_rows("saved_cards", f"date=eq.{safe}&order=created_at.asc")
-            matches, err2 = _read_rows("saved_markets", f"date=eq.{safe}&market=eq.fixture&order=created_at.asc")
-            if err1 or err2:
-                return _json({"error": err1 or err2}, 503)
-            return _json({"date": date_str, "cards": cards, "matches": matches,
-                          "source": "supabase - no API call"})
-        try:
-            days = max(1, min(int(query.get("days", KEEP_DAYS)), KEEP_DAYS))
-        except (TypeError, ValueError):
-            days = KEEP_DAYS
-        cutoff = (datetime.now(LOCAL_TZ).date() - timedelta(days=days - 1)).strftime("%Y-%m-%d")
-        cards, error = _read_rows("saved_cards", f"date=gte.{cutoff}&order=date.desc,created_at.asc&limit=500")
-        if error:
-            return _json({"error": error}, 503)
-        return _json({"days": days, "cards": cards, "source": "supabase - no API call"})
+        if path == "/api/history":
+            req_date = (qs.get("date") or [_date_str(-1)])[0]
+            matches, cards, _, err = _load_saved_date_data(req_date)
+            if err and matches is None:
+                self._send_json(500, {"date": req_date, "matches": [], "cards": [], "error": err})
+                return
+            self._send_json(200, {
+                "date": req_date,
+                "matches": matches or [],
+                "cards": cards or [],
+                "source": "supabase history",
+            })
+            return
 
-    if path == "/api/today":
-        date_str = query.get("date") or local_today()
-        if not valid_date(date_str):
-            return _json({"error": "Invalid date"}, 400)
-        safe = urllib.parse.quote(date_str, safe="")
-        cards, e1 = _read_rows("saved_cards", f"date=eq.{safe}&order=created_at.asc")
-        matches, e2 = _read_rows("saved_markets", f"date=eq.{safe}&market=eq.fixture&order=created_at.asc")
-        standings, e3 = _read_rows("saved_standings", f"date=eq.{safe}&order=league.asc,position.asc")
-        if e1 or e2 or e3:
-            return _json({"error": e1 or e2 or e3}, 503)
-        return _json({"date": date_str, "cards": cards, "matches": matches,
-                      "standings": standings, "source": "supabase - no API call"})
+        if path == "/api/scores":
+            req_date = (qs.get("date") or [_date_str(0)])[0]
+            res = _sync_live_scores_with_cooldown(req_date)
+            self._send_json(200, res)
+            return
 
-    if path == "/api/standings":
-        date_str = query.get("date") or local_today()
-        if not valid_date(date_str):
-            return _json({"error": "Invalid date"}, 400)
-        safe = urllib.parse.quote(date_str, safe="")
-        rows, error = _read_rows("saved_standings", f"date=eq.{safe}&order=league.asc,position.asc")
-        if error:
-            return _json({"error": error}, 503)
-        grouped = {}
-        for row in rows:
-            if isinstance(row, dict) and row.get("league"):
-                grouped.setdefault(row["league"], []).append({
-                    "position": row.get("position"), "team": row.get("team"),
-                    "played": row.get("played"), "points": row.get("points"),
-                })
-        return _json({"date": date_str, "leagues": list(grouped), "standings": grouped,
-                      "source": "supabase - no API call"})
+        if path in {"/api/cron", "/api/cron/run"}:
+            if CRON_SECRET:
+                auth = (self.headers.get("Authorization") or "").strip()
+                q_secret = (qs.get("secret") or [""])[0].strip()
+                if auth != f"Bearer {CRON_SECRET}" and q_secret != CRON_SECRET:
+                    self._send_json(401, {"ok": False, "error": "Unauthorized cron request"})
+                    return
 
-    if path == "/api/scores":
-        date_str = query.get("date") or local_today()
-        if not valid_date(date_str):
-            return _json({"error": "Invalid date"}, 400)
-        result = _sync_live_scores_with_cooldown(date_str)
-        return _json(result)
+            today_str = _date_str(0)
+            tmr_str = _date_str(1)
+            today_res = _run_cron_for_date(today_str)
+            tmr_res = _run_cron_for_date(tmr_str)
+            self._send_json(200, {
+                "ok": bool(today_res.get("ok") or tmr_res.get("ok")),
+                "today": today_res,
+                "tomorrow": tmr_res,
+            })
+            return
 
-    if path == "/api/saved-markets":
-        if method == "POST":
-            try:
-                payload = json.loads(body) if body else {}
-            except ValueError:
-                return _json({"error": "Invalid JSON body"}, 400)
-            result = sb_post("saved_markets", payload)
-            return _json(result, 503 if _has_error(result) else 200)
-        rows, error = _read_rows("saved_markets", "market=eq.fixture&order=created_at.desc&limit=200")
-        return _json({"error": error} if error else rows, 503 if error else 200)
-
-    if path == "/api/saved-cards":
-        if method != "GET":
-            return _json({"error": "Use POST /api/build-cards"}, 405)
-        rows, error = _read_rows("saved_cards", "order=date.desc,created_at.asc&limit=500")
-        return _json({"error": error} if error else rows, 503 if error else 200)
-
-    if path == "/api/update-result" and method == "POST":
-        try:
-            payload = json.loads(body) if body else {}
-        except ValueError:
-            return _json({"error": "Invalid JSON body"}, 400)
-        return _json({
-            "market": payload.get("market"),
-            "result": win_lose(payload.get("market", ""), payload.get("home_goals"),
-                               payload.get("away_goals"), payload.get("fh_home"),
-                               payload.get("fh_away")),
-        })
-
-    if path == "/":
-        try:
-            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            with open(os.path.join(root, "index.html"), encoding="utf-8") as file:
-                return {"statusCode": 200,
-                        "headers": {"Content-Type": "text/html; charset=utf-8"},
-                        "body": file.read()}
-        except Exception as exc:
-            return _json({"error": "index.html could not be loaded", "detail": str(exc)}, 500)
-
-    return _json({"error": "Not found", "path": path}, 404)
-
-
-def _save_cards_for_route(date_str, cards):
-    rows = _card_rows(date_str, cards)
-    if not rows:
-        return {"error": "No cards to save"}
-    return sb_post("saved_cards", rows)
-
-
-from flask import Flask, request, Response
-
-app = Flask(__name__)
-
-
-@app.route("/", defaults={"subpath": ""}, methods=["GET", "POST", "OPTIONS"])
-@app.route("/<path:subpath>", methods=["GET", "POST", "OPTIONS"])
-def vercel_entry(subpath):
-    result = handler({
-        "path": request.path,
-        "httpMethod": request.method,
-        "body": request.get_data(as_text=True) or "",
-        "queryStringParameters": dict(request.args),
-    }, None)
-    return Response(result.get("body", ""), status=result.get("statusCode", 200),
-                    headers=result.get("headers", {}))
+        self._send_json(404, {"error": "Not found"})
