@@ -450,6 +450,17 @@
       white-space: nowrap;
     }
 
+    .score-pill {
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: #27323a;
+      border: 1px solid var(--border2);
+      color: #eef3f5;
+      font-size: 10px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
     .result-pill {
       padding: 2px 7px;
       border-radius: 9999px;
@@ -544,7 +555,7 @@
     }
 
     .leg-sub {
-      margin-top: 3px;
+      margin-top: 4px;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
@@ -566,6 +577,8 @@
       border: 1px solid var(--border);
       background: var(--card);
       padding: 12px;
+      touch-action: pan-y;
+      user-select: none;
     }
 
     .session-row {
@@ -942,14 +955,13 @@
         </div>
       </header>
 
-      <!-- 1. 2.50 Rollover Card first -->
       <section aria-label="2.50 Rollover Card">
         <div class="section-head">
           <h2 class="section-title">#1 · 2.50 Rollover Card</h2>
-          <span class="section-count mono">Morning &amp; Evening Sessions</span>
+          <span class="section-count mono">Swipe ← Card 1 · Card 2 →</span>
         </div>
-        <p class="sub-line">Tap Morning or Evening side by side, then switch between Card 1 and Card 2.</p>
-        <div class="rollover-box">
+        <p class="sub-line">Pick Morning or Evening, then tap or swipe left/right between Card 1 and Card 2.</p>
+        <div class="rollover-box" id="rollover-swipe-box">
           <div class="session-row" role="tablist" aria-label="2.50 Rollover session">
             <button type="button" class="session-btn active" data-rollover-session="Morning" aria-selected="true">Morning 2.50 Rollover</button>
             <button type="button" class="session-btn" data-rollover-session="Evening" aria-selected="false">Evening 2.50 Rollover</button>
@@ -962,7 +974,6 @@
         </div>
       </section>
 
-      <!-- 2. Early Morning & Mix Accumulators right below 2.50 Rollover -->
       <section aria-label="Early Morning and Mix Accumulators">
         <div class="section-head">
           <h2 class="section-title">#2 · Early Morning &amp; Mix Accumulators</h2>
@@ -972,14 +983,12 @@
         <div class="special-stack" id="special-cards"></div>
       </section>
 
-      <!-- AdSense-ready slot between major accumulator blocks -->
       <div class="ad-slot" id="adsense-slot-1" aria-label="Advertisement">
         <span class="ad-label mono">Sponsored / AdSense Slot</span>
         <div class="ad-placeholder" id="adsense-inner-1">Ad space ready for Google AdSense placement.</div>
       </div>
     </div>
 
-    <!-- 3. 12 Individual Market Accumulator Cards underneath -->
     <section aria-label="Market Accumulators">
       <div class="narrow-col">
         <div class="section-head">
@@ -1012,7 +1021,7 @@
           <h2 class="section-title">All Fixtures &amp; Predictions</h2>
           <span class="section-count mono" id="matches-count">0 shown</span>
         </div>
-        <p class="sub-line">Sorted Live → Upcoming → Finished. Each fixture shows all 12 numbered markets and status badges.</p>
+        <p class="sub-line">Sorted Live → Upcoming → Finished. Each fixture shows all 12 numbered markets and live market status.</p>
         <div class="matches-list" id="matches-list"></div>
       </section>
 
@@ -1077,6 +1086,22 @@
         "Mega Mix Accumulator (30.00+)"
       ];
 
+      const LEAGUE_COUNTRY_MAP = [
+        { match: /premier league|championship|fa cup|efl/i, country: "England" },
+        { match: /la liga|laliga|segunda división|primera división rfef|copa del rey/i, country: "Spain" },
+        { match: /serie a|serie b|coppa italia/i, country: "Italy" },
+        { match: /bundesliga|2\. bundesliga|dfb pokal/i, country: "Germany" },
+        { match: /ligue 1|ligue 2/i, country: "France" },
+        { match: /eredivisie|eerste divisie/i, country: "Netherlands" },
+        { match: /primeira liga|liga portugal/i, country: "Portugal" },
+        { match: /j1 league|j2 league|j3 league/i, country: "Japan" },
+        { match: /lao league/i, country: "Laos" },
+        { match: /liga 1|liga 2/i, country: "Indonesia" },
+        { match: /australian championship|a-league/i, country: "Australia" },
+        { match: /uefa champions league|uefa europa league|uefa conference league/i, country: "UEFA" },
+        { match: /conmebol libertadores|conmebol sudamericana/i, country: "CONMEBOL" }
+      ];
+
       const STATE = {
         windowMode: "Today",
         search: "",
@@ -1101,6 +1126,18 @@
 
       const $ = (id) => document.getElementById(id);
 
+      function resolveCountry(rawCountry, leagueName) {
+        const cleaned = String(rawCountry || "").trim();
+        if (cleaned && !/^(intl|international|world)$/i.test(cleaned)) {
+          return cleaned;
+        }
+        const lg = String(leagueName || "").trim();
+        for (const entry of LEAGUE_COUNTRY_MAP) {
+          if (entry.match.test(lg)) return entry.country;
+        }
+        return cleaned || "League";
+      }
+
       function formatLagDate(offsetDays = 0) {
         const now = new Date();
         const lagMillis = now.getTime() + (now.getTimezoneOffset() * 60000) + (3600 * 1000) + (offsetDays * 86400000);
@@ -1112,12 +1149,12 @@
       }
 
       function formatKickoffWat(raw) {
-        if (!raw) return { dateStr: "", timeStr: "" };
+        if (!raw) return { dateStr: "", timeStr: "", epoch: 0 };
         const dt = new Date(raw);
-        if (Number.isNaN(dt.getTime())) return { dateStr: String(raw).slice(0, 10), timeStr: "" };
+        if (Number.isNaN(dt.getTime())) return { dateStr: String(raw).slice(0, 10), timeStr: "", epoch: 0 };
         const dateStr = dt.toLocaleDateString("en-GB", { timeZone: "Africa/Lagos", day: "2-digit", month: "2-digit" });
         const timeStr = dt.toLocaleTimeString("en-GB", { timeZone: "Africa/Lagos", hour: "2-digit", minute: "2-digit" });
-        return { dateStr, timeStr };
+        return { dateStr, timeStr, epoch: dt.getTime() };
       }
 
       function buildTenDayTabs() {
@@ -1154,28 +1191,51 @@
 
       function normalizeStatus(raw) {
         const val = String(raw || "").trim().toUpperCase();
-        if (["LIVE", "1H", "2H", "HT", "ET", "P", "INT"].includes(val)) return "Live";
-        if (["WON"].includes(val)) return "Won";
-        if (["LOST", "LOSS"].includes(val)) return "Lost";
-        if (["FINISHED", "FT", "AET", "PEN"].includes(val)) return "Finished";
+        if (["LIVE", "1H", "2H", "HT", "ET", "P", "INT", "IN_PLAY"].includes(val)) return "Live";
+        if (["FINISHED", "FT", "AET", "PEN", "WON", "LOST", "LOSS"].includes(val)) return "Finished";
         return "Upcoming";
       }
 
-      function evaluateLegOutcome(marketName, leg) {
-        const explicit = String(leg.result || "").toUpperCase();
-        if (explicit === "WON" || explicit === "WIN") return "Won";
-        if (explicit === "LOST" || explicit === "LOSS") return "Lost";
-
-        const hg = leg.home_goals != null ? Number(leg.home_goals) : null;
-        const ag = leg.away_goals != null ? Number(leg.away_goals) : null;
-        if (hg == null || ag == null || Number.isNaN(hg) || Number.isNaN(ag)) {
-          return normalizeStatus(leg.status);
+      function parseScoreNumbers(item) {
+        let hg = item.home_goals != null ? Number(item.home_goals) : null;
+        let ag = item.away_goals != null ? Number(item.away_goals) : null;
+        if ((hg == null || ag == null) && typeof item.score === "string") {
+          const m = item.score.match(/(\d+)\s*[-:]\s*(\d+)/);
+          if (m) {
+            hg = Number(m[1]);
+            ag = Number(m[2]);
+          }
         }
+        if (hg != null && Number.isNaN(hg)) hg = null;
+        if (ag != null && Number.isNaN(ag)) ag = null;
+        return { hg, ag };
+      }
+
+      function formatLiveTimeInfo(item, status) {
+        if (status !== "Live") return "";
+        const elapsedNum = item.elapsed != null && !Number.isNaN(Number(item.elapsed)) ? Number(item.elapsed) : null;
+        const shortCode = String(item.status_short || "").toUpperCase();
+        if (elapsedNum != null) {
+          const estTotal = shortCode === "1H" ? 45 : 90;
+          const rem = Math.max(0, estTotal - elapsedNum);
+          return `${elapsedNum}' (${rem}' left)`;
+        }
+        if (shortCode) return shortCode;
+        return "In Play";
+      }
+
+      function evaluateMarketBadge(marketName, item) {
+        const baseStatus = normalizeStatus(item.status);
+        if (baseStatus === "Upcoming") return "Upcoming";
+
+        const { hg, ag } = parseScoreNumbers(item);
+        if (hg == null || ag == null) return baseStatus;
 
         const total = hg + ag;
         const btts = hg >= 1 && ag >= 1;
-        const mkt = String(marketName || leg.market || "");
+        const mkt = String(marketName || item.market || "");
         let won = null;
+
         if (mkt === "Over 1.5") won = total >= 2;
         else if (mkt === "Over 2.5") won = total >= 3;
         else if (mkt === "BTTS") won = btts;
@@ -1189,8 +1249,8 @@
         else if (mkt === "X2 + BTTS") won = ag >= hg && btts;
 
         if (won === true) return "Won";
-        if (won === false && normalizeStatus(leg.status) === "Finished") return "Lost";
-        return normalizeStatus(leg.status);
+        if (won === false && baseStatus === "Finished") return "Lost";
+        return baseStatus;
       }
 
       function parseLegs(rawLegs, fallbackMarket = "Goal Market") {
@@ -1209,29 +1269,54 @@
           const item = leg && typeof leg === "object" ? leg : {};
           const teams = item.teams || `${item.home || "Home"} vs ${item.away || "Away"}`;
           const mkt = item.market || fallbackMarket;
-          const outcome = evaluateLegOutcome(mkt, item);
-          const { dateStr, timeStr } = formatKickoffWat(item.kickoff || item.date || "");
-          const score = item.score || (item.home_goals != null && item.away_goals != null ? `${item.home_goals}-${item.away_goals}` : "");
+          const rawKickoff = item.kickoff || item.date || "";
+          const { dateStr, timeStr, epoch } = formatKickoffWat(rawKickoff);
+          const { hg, ag } = parseScoreNumbers(item);
+          const score = item.score || (hg != null && ag != null ? `${hg} - ${ag}` : "");
+          const matchStatus = normalizeStatus(item.status || item.status_short || "Upcoming");
+          const badgeStatus = evaluateMarketBadge(mkt, { ...item, status: matchStatus, home_goals: hg, away_goals: ag, score });
+          const liveClock = formatLiveTimeInfo(item, matchStatus);
+          const league = item.league || "Football";
+          const country = resolveCountry(item.country, league);
+
           return {
             id: item.fixture_id || `${idx}`,
             teams,
             home: item.home || "",
             away: item.away || "",
-            country: item.country || "Intl",
-            league: item.league || "Football",
+            country,
+            league,
             dateStr,
             timeStr,
+            epoch,
             market: mkt,
             odds: item.odds ?? item.odd ?? "—",
-            status: outcome,
-            score
+            matchStatus,
+            badgeStatus,
+            score,
+            liveClock
           };
         });
       }
 
-      function sortByStatus(items) {
-        const rank = { Live: 0, Won: 1, Upcoming: 2, Lost: 3, Finished: 4 };
-        return [...items].sort((a, b) => (rank[normalizeStatus(a.status)] ?? 2) - (rank[normalizeStatus(b.status)] ?? 2));
+      function sortLegsStrict(legs) {
+        const rank = { Live: 0, Upcoming: 1, Finished: 2 };
+        return [...legs].sort((a, b) => {
+          const ra = rank[normalizeStatus(a.matchStatus ?? a.status)] ?? 1;
+          const rb = rank[normalizeStatus(b.matchStatus ?? b.status)] ?? 1;
+          if (ra !== rb) return ra - rb;
+          return (a.epoch || 0) - (b.epoch || 0);
+        });
+      }
+
+      function sortMatchesStrict(matches) {
+        const rank = { Live: 0, Upcoming: 1, Finished: 2 };
+        return [...matches].sort((a, b) => {
+          const ra = rank[normalizeStatus(a.status)] ?? 1;
+          const rb = rank[normalizeStatus(b.status)] ?? 1;
+          if (ra !== rb) return ra - rb;
+          return formatKickoffWat(a.kickoff || a.date || "").epoch - formatKickoffWat(b.kickoff || b.date || "").epoch;
+        });
       }
 
       function badgeClass(statusText) {
@@ -1244,12 +1329,12 @@
 
       function computeCardSummary(card, legs) {
         const totalLegs = legs.length;
-        const wonCount = legs.filter((l) => l.status === "Won").length;
-        const liveCount = legs.filter((l) => l.status === "Live").length;
-        const progressText = totalLegs ? `${wonCount}/${totalLegs} won` : `0/0 won`;
+        const wonCount = legs.filter((l) => l.badgeStatus === "Won").length;
+        const liveCount = legs.filter((l) => l.matchStatus === "Live").length;
+        const progressText = `${wonCount}/${totalLegs} won`;
 
         const rawResult = String(card.result || card.status || "").toUpperCase();
-        if (rawResult === "LOST" || legs.some((l) => l.status === "Lost")) {
+        if (rawResult === "LOST" || legs.some((l) => l.badgeStatus === "Lost")) {
           return { text: "Lost", cls: "lost", progressText, wonCount, liveCount, totalLegs };
         }
         if (totalLegs > 0 && wonCount === totalLegs) {
@@ -1266,7 +1351,8 @@
         legs.forEach((leg, i) => {
           const meta = [leg.country, leg.league, leg.dateStr, leg.timeStr].filter(Boolean).join(" · ");
           const sc = leg.score ? ` [${leg.score}]` : "";
-          lines.push(`${i + 1}. ${leg.teams}${sc} — ${leg.market} @${leg.odds} (${leg.status}) [${meta}]`);
+          const clk = leg.liveClock ? ` (${leg.liveClock})` : "";
+          lines.push(`${i + 1}. ${leg.teams}${sc}${clk} — ${leg.market} @${leg.odds} [${leg.badgeStatus}] · ${meta}`);
         });
         return lines.join("\n");
       }
@@ -1311,7 +1397,15 @@
 
           ctx.fillStyle = "#9aa8af";
           ctx.font = "11px Inter, sans-serif";
-          const extra = [leg.country, leg.league, leg.dateStr, leg.timeStr, leg.score ? `Score: ${leg.score}` : "", leg.status].filter(Boolean).join(" | ");
+          const extra = [
+            leg.country,
+            leg.league,
+            leg.dateStr,
+            leg.timeStr,
+            leg.score ? `Score: ${leg.score}` : "",
+            leg.liveClock,
+            leg.badgeStatus
+          ].filter(Boolean).join(" | ");
           ctx.fillText(extra, 46, y + 16);
           y += 42;
         });
@@ -1400,7 +1494,7 @@
           if (extraTomorrow && Array.isArray(extraTomorrow.matches)) {
             combinedMatches = combinedMatches.concat(extraTomorrow.matches);
           }
-          STATE.matches = sortByStatus(combinedMatches);
+          STATE.matches = sortMatchesStrict(combinedMatches);
           STATE.standings = groupStandings(mainStandings.standings ?? mainToday.standings);
 
           populateLeagueFilter();
@@ -1455,9 +1549,12 @@
             const goalsHome = fx?.goals?.home;
             const goalsAway = fx?.goals?.away;
             const shortStatus = fx?.fixture?.status?.short || "LIVE";
-            const scoreStr = (goalsHome != null && goalsAway != null) ? `${goalsHome}-${goalsAway}` : shortStatus;
+            const elapsed = fx?.fixture?.status?.elapsed;
+            const scoreStr = (goalsHome != null && goalsAway != null) ? `${goalsHome} - ${goalsAway}` : shortStatus;
             const info = {
               status: normalizeStatus(shortStatus),
+              status_short: shortStatus,
+              elapsed,
               score: scoreStr,
               home_goals: goalsHome,
               away_goals: goalsAway
@@ -1466,11 +1563,20 @@
             if (home && away) liveMap.set(`pair:${home.toLowerCase()} vs ${away.toLowerCase()}`, info);
           });
 
-          STATE.matches = sortByStatus(STATE.matches.map((m) => {
+          STATE.matches = sortMatchesStrict(STATE.matches.map((m) => {
             const pairKey = `pair:${String(m.home || "").toLowerCase()} vs ${String(m.away || "").toLowerCase()}`;
             const hit = liveMap.get(pairKey);
             return hit
-              ? { ...m, status: hit.status, score: hit.score, home_goals: hit.home_goals, away_goals: hit.away_goals, result: hit.score }
+              ? {
+                  ...m,
+                  status: hit.status,
+                  status_short: hit.status_short,
+                  elapsed: hit.elapsed,
+                  score: hit.score,
+                  home_goals: hit.home_goals,
+                  away_goals: hit.away_goals,
+                  result: hit.score
+                }
               : m;
           }));
           renderMatches();
@@ -1512,15 +1618,18 @@
         if (!legs.length) return "";
         return `<div class="acc-legs">${legs.map((leg, i) => {
           const metaParts = [leg.country, leg.league, leg.dateStr, leg.timeStr].filter(Boolean).join(" · ");
-          const scorePart = leg.score ? ` · ${leg.score}` : "";
+          const scoreBadge = leg.score
+            ? `<span class="score-pill mono">${escapeHtml(leg.score)}${leg.liveClock ? ` · ${escapeHtml(leg.liveClock)}` : ""}</span>`
+            : (leg.liveClock ? `<span class="score-pill mono">${escapeHtml(leg.liveClock)}</span>` : "");
           return `
             <div class="leg-row">
               <div class="leg-teams">${i + 1}. ${escapeHtml(leg.teams)}</div>
               <div class="leg-meta-line">${escapeHtml(metaParts)}</div>
               <div class="leg-sub">
                 <span>${escapeHtml(leg.market)}</span>
-                <span class="leg-odd mono">@${escapeHtml(leg.odds)}${escapeHtml(scorePart)}</span>
-                <span class="result-pill ${badgeClass(leg.status)}">${escapeHtml(leg.status)}</span>
+                <span class="leg-odd mono">@${escapeHtml(leg.odds)}</span>
+                ${scoreBadge}
+                <span class="result-pill ${badgeClass(leg.badgeStatus)}">${escapeHtml(leg.badgeStatus)}</span>
               </div>
             </div>
           `;
@@ -1545,7 +1654,7 @@
         const cardId = `market-${marketMeta.name}`;
         const collapsed = STATE.collapsedIds.has(cardId);
         const copied = STATE.copiedIds.has(cardId);
-        const legs = sortByStatus(parseLegs(cardRecord?.legs, marketMeta.name));
+        const legs = sortLegsStrict(parseLegs(cardRecord?.legs, marketMeta.name));
         const summary = computeCardSummary(cardRecord || {}, legs);
         const oddsText = cardRecord?.total_odds ?? "—";
         const targetText = cardRecord?.target || "12.00+";
@@ -1619,7 +1728,7 @@
         const key = `2.50 rollover - ${STATE.rolloverSession} card ${STATE.rolloverSlot}`.toLowerCase();
         const found = STATE.cards.find((c) => String(c?.market || "").trim().toLowerCase() === key);
         const heading = `${STATE.rolloverSession} 2.50 Rollover — Card ${STATE.rolloverSlot}`;
-        const legs = sortByStatus(parseLegs(found?.legs, heading));
+        const legs = sortLegsStrict(parseLegs(found?.legs, heading));
         const summary = computeCardSummary(found || {}, legs);
         const oddsText = found?.total_odds ?? "—";
         const targetText = found?.target || "2.50+";
@@ -1653,7 +1762,7 @@
 
         $("special-cards").innerHTML = MIX_CARD_LABELS.map((label, idx) => {
           const found = byName.get(label.toLowerCase());
-          const legs = sortByStatus(parseLegs(found?.legs, label));
+          const legs = sortLegsStrict(parseLegs(found?.legs, label));
           const summary = computeCardSummary(found || {}, legs);
           const oddsText = found?.total_odds ?? "—";
           const targetText = found?.target || (label.includes("30.00+") ? "30.00+" : "12.00+");
@@ -1683,7 +1792,7 @@
       }
 
       function renderMatches() {
-        const list = sortByStatus(STATE.matches.filter(matchesFilters));
+        const list = sortMatchesStrict(STATE.matches.filter(matchesFilters));
         $("matches-count").textContent = `${list.length} shown`;
 
         if (!list.length) {
@@ -1695,19 +1804,23 @@
           const status = normalizeStatus(m.status);
           const home = m.home || "Home";
           const away = m.away || "Away";
-          const scoreText = m.score || (m.result && m.result !== "NS" ? m.result : "");
+          const { hg, ag } = parseScoreNumbers(m);
+          const scoreText = m.score || (hg != null && ag != null ? `${hg} - ${ag}` : "");
+          const liveClock = formatLiveTimeInfo(m, status);
           const { dateStr, timeStr } = formatKickoffWat(m.kickoff || m.date || "");
+          const country = resolveCountry(m.country, m.league);
 
           const boxesHtml = MARKETS_12.map((mkt, mIdx) => {
             const suppliedOdd = m.market_odds && m.market_odds[mkt.name] != null
               ? Number(m.market_odds[mkt.name]).toFixed(2)
               : mkt.fallbackOdd.toFixed(2);
-            const mktStatus = evaluateLegOutcome(mkt.name, m);
+            const mktStatus = evaluateMarketBadge(mkt.name, { ...m, home_goals: hg, away_goals: ag, score: scoreText });
             return `
               <div class="market-box">
                 <span class="mono" style="font-size:9px;color:var(--gold);">#${mIdx + 1}</span>
                 <span style="font-size:10px;font-weight:400;">${escapeHtml(mkt.short)}</span>
                 <span class="market-box-odd mono">${escapeHtml(suppliedOdd)}</span>
+                ${scoreText && status !== "Upcoming" ? `<span class="mono" style="font-size:9px;color:var(--muted);">${escapeHtml(scoreText)}</span>` : ""}
                 <span class="result-pill ${badgeClass(mktStatus)}" style="font-size:9px;padding:1px 5px;">${escapeHtml(mktStatus)}</span>
               </div>
             `;
@@ -1721,8 +1834,11 @@
                 <span class="vs-badge mono">${escapeHtml(scoreText || "VS")}</span>
               </div>
               <div class="match-meta">
-                <span>${escapeHtml([m.country, m.league, dateStr, timeStr].filter(Boolean).join(" · "))}</span>
-                <span class="result-pill ${badgeClass(status)}">${escapeHtml(status)}</span>
+                <span>${escapeHtml([country, m.league, dateStr, timeStr].filter(Boolean).join(" · "))}</span>
+                <span style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+                  ${liveClock ? `<span class="score-pill mono">${escapeHtml(liveClock)}</span>` : ""}
+                  <span class="result-pill ${badgeClass(status)}">${escapeHtml(status)}</span>
+                </span>
               </div>
               <div class="match-grid">${boxesHtml}</div>
             </article>
@@ -1807,7 +1923,7 @@
         }
 
         const cardsHtml = STATE.historyCards.map((c, idx) => {
-          const legs = sortByStatus(parseLegs(c.legs, c.market || "Market"));
+          const legs = sortLegsStrict(parseLegs(c.legs, c.market || "Market"));
           const summary = computeCardSummary(c, legs);
           return `
             <article class="special-card">
@@ -1842,6 +1958,39 @@
         btn.textContent = `Alerts: ${STATE.alertsEnabled ? "ON" : "OFF"}`;
       }
 
+      function bindRolloverSwipe() {
+        const box = $("rollover-swipe-box");
+        if (!box) return;
+        let startX = null;
+        let startY = null;
+
+        box.addEventListener("pointerdown", (e) => {
+          if (e.target.closest("button, a, input, select")) return;
+          startX = e.clientX;
+          startY = e.clientY;
+        });
+
+        box.addEventListener("pointerup", (e) => {
+          if (startX == null || startY == null) return;
+          const dx = e.clientX - startX;
+          const dy = e.clientY - startY;
+          startX = null;
+          startY = null;
+
+          if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+            if (dx < 0 && STATE.rolloverSlot !== "2") {
+              STATE.rolloverSlot = "2";
+              renderRolloverSection();
+              showToast(`${STATE.rolloverSession} Rollover · Card 2`);
+            } else if (dx > 0 && STATE.rolloverSlot !== "1") {
+              STATE.rolloverSlot = "1";
+              renderRolloverSection();
+              showToast(`${STATE.rolloverSession} Rollover · Card 1`);
+            }
+          }
+        });
+      }
+
       function bindEvents() {
         document.querySelectorAll(".day-btn").forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -1865,6 +2014,8 @@
             renderRolloverSection();
           });
         });
+
+        bindRolloverSwipe();
 
         $("search-input").addEventListener("input", (e) => {
           STATE.search = e.target.value || "";
