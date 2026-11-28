@@ -910,14 +910,14 @@
       <header>
         <div class="header-row">
           <h1 class="brand-word">GOALZONE<span class="brand-num">247</span></h1>
-          <span class="status-badge mono" id="source-badge">Supabase + API</span>
+          <span class="status-badge mono" id="source-badge">Supabase + Auto Live (30m)</span>
         </div>
         <p class="sub-line">Goals. Value. Every single day. • Africa/Lagos (WAT)</p>
         <div class="meta-row">
           <span class="live-dot" aria-hidden="true"></span>
           <span id="updated-label">Syncing from database…</span>
           <button type="button" class="action-pill" id="push-toggle-btn" aria-pressed="false">Alerts: OFF</button>
-          <button type="button" class="action-pill" id="live-scores-btn">Refresh Live Scores</button>
+          <span class="status-badge mono" id="live-sync-status">Live Sync: Auto (30m)</span>
         </div>
 
         <nav class="day-nav" aria-label="Match window">
@@ -1030,7 +1030,7 @@
           <h2 class="section-title">League Tables</h2>
           <span class="section-count mono" id="standings-count">Supabase</span>
         </div>
-        <p class="sub-line">Standings stored in Supabase for the selected date.</p>
+        <p class="sub-line">Top 5 teams per active league stored in Supabase for the selected date.</p>
         <div id="standings-controls" class="hidden" style="margin-top: 8px;">
           <select id="standings-league-select" class="select-box" aria-label="Select standing league"></select>
         </div>
@@ -1054,7 +1054,7 @@
   </div>
 
   <div class="fab-stack">
-    <button type="button" class="fab-btn fab-refresh" id="fab-refresh" title="Reload data" aria-label="Reload data">↻</button>
+    <button type="button" class="fab-btn fab-refresh" id="fab-refresh" title="Reload view" aria-label="Reload view">↻</button>
     <button type="button" class="fab-btn fab-nav" id="fab-top" title="Scroll to top" aria-label="Scroll to top">↑</button>
     <button type="button" class="fab-btn fab-nav" id="fab-bottom" title="Scroll to bottom" aria-label="Scroll to bottom">↓</button>
   </div>
@@ -1199,8 +1199,9 @@
       function parseScoreNumbers(item) {
         let hg = item.home_goals != null ? Number(item.home_goals) : null;
         let ag = item.away_goals != null ? Number(item.away_goals) : null;
-        if ((hg == null || ag == null) && typeof item.score === "string") {
-          const m = item.score.match(/(\d+)\s*[-:]\s*(\d+)/);
+        const rawScore = typeof item.score === "string" ? item.score : (typeof item.result === "string" ? item.result : "");
+        if ((hg == null || ag == null) && rawScore) {
+          const m = rawScore.match(/(\d+)\s*[-:]\s*(\d+)/);
           if (m) {
             hg = Number(m[1]);
             ag = Number(m[2]);
@@ -1209,6 +1210,14 @@
         if (hg != null && Number.isNaN(hg)) hg = null;
         if (ag != null && Number.isNaN(ag)) ag = null;
         return { hg, ag };
+      }
+
+      function extractStatusFromResult(item) {
+        if (item.status && item.status !== "Upcoming") return normalizeStatus(item.status);
+        const resStr = String(item.result || "").toUpperCase();
+        if (/\b(1H|2H|HT|ET|LIVE|IN_PLAY)\b/.test(resStr)) return "Live";
+        if (/\b(FT|AET|PEN|FINISHED)\b/.test(resStr)) return "Finished";
+        return normalizeStatus(item.status || "Upcoming");
       }
 
       function formatLiveTimeInfo(item, status) {
@@ -1220,12 +1229,14 @@
           const rem = Math.max(0, estTotal - elapsedNum);
           return `${elapsedNum}' (${rem}' left)`;
         }
+        const m = String(item.result || "").match(/\(([^)]+)\)/);
+        if (m) return m[1];
         if (shortCode) return shortCode;
         return "In Play";
       }
 
       function evaluateMarketBadge(marketName, item) {
-        const baseStatus = normalizeStatus(item.status);
+        const baseStatus = extractStatusFromResult(item);
         if (baseStatus === "Upcoming") return "Upcoming";
 
         const { hg, ag } = parseScoreNumbers(item);
@@ -1273,7 +1284,7 @@
           const { dateStr, timeStr, epoch } = formatKickoffWat(rawKickoff);
           const { hg, ag } = parseScoreNumbers(item);
           const score = item.score || (hg != null && ag != null ? `${hg} - ${ag}` : "");
-          const matchStatus = normalizeStatus(item.status || item.status_short || "Upcoming");
+          const matchStatus = extractStatusFromResult(item);
           const badgeStatus = evaluateMarketBadge(mkt, { ...item, status: matchStatus, home_goals: hg, away_goals: ag, score });
           const liveClock = formatLiveTimeInfo(item, matchStatus);
           const league = item.league || "Football";
@@ -1312,10 +1323,50 @@
       function sortMatchesStrict(matches) {
         const rank = { Live: 0, Upcoming: 1, Finished: 2 };
         return [...matches].sort((a, b) => {
-          const ra = rank[normalizeStatus(a.status)] ?? 1;
-          const rb = rank[normalizeStatus(b.status)] ?? 1;
+          const ra = rank[extractStatusFromResult(a)] ?? 1;
+          const rb = rank[extractStatusFromResult(b)] ?? 1;
           if (ra !== rb) return ra - rb;
           return formatKickoffWat(a.kickoff || a.date || "").epoch - formatKickoffWat(b.kickoff || b.date || "").epoch;
+        });
+      }
+
+      function mergeTodayAndTomorrowCards(todayCards, tomorrowCards) {
+        if (!tomorrowCards.length) return todayCards;
+        if (!todayCards.length) return tomorrowCards;
+        const tmrByMarket = new Map();
+        tomorrowCards.forEach((c) => {
+          if (c && c.market) tmrByMarket.set(String(c.market).trim().toLowerCase(), c);
+        });
+
+        return todayCards.map((c) => {
+          const key = String(c?.market || "").trim().toLowerCase();
+          const tmr = tmrByMarket.get(key);
+          if (!tmr) return c;
+
+          const todayLegs = parseLegs(c.legs, c.market);
+          const tmrLegs = parseLegs(tmr.legs, tmr.market);
+          const interleaved = [];
+          const seen = new Set();
+          const maxLen = Math.max(todayLegs.length, tmrLegs.length);
+          for (let i = 0; i < maxLen; i++) {
+            for (const src of [todayLegs, tmrLegs]) {
+              if (i < src.length) {
+                const l = src[i];
+                const dedup = `${l.teams}|${l.market}`;
+                if (!seen.has(dedup)) {
+                  seen.add(dedup);
+                  interleaved.push(l);
+                }
+              }
+            }
+          }
+          const combined = interleaved.slice(0, Math.max(todayLegs.length, 6));
+          const totalOdds = combined.reduce((acc, l) => acc * (Number(l.odds) || 1), 1);
+          return {
+            ...c,
+            legs: combined,
+            total_odds: combined.length ? totalOdds.toFixed(2) : c.total_odds
+          };
         });
       }
 
@@ -1471,6 +1522,72 @@
         return formatLagDate(0);
       }
 
+      async function syncTimedLiveScores(silent = true) {
+        const todayDate = formatLagDate(0);
+        try {
+          const data = await fetchJson(`/api/scores?date=${encodeURIComponent(todayDate)}`);
+          const items = Array.isArray(data.items) ? data.items : [];
+          const minsLeft = Math.max(1, Math.ceil((Number(data.next_update_in_sec) || 1800) / 60));
+          $("live-sync-status").textContent = data.cached
+            ? `Live Cache (${minsLeft}m next)`
+            : `Live Synced (30m timer)`;
+
+          if (!items.length) return;
+
+          const liveByPair = new Map();
+          const liveById = new Map();
+          items.forEach((it) => {
+            if (it.fixture_id != null) liveById.set(it.fixture_id, it);
+            if (it.home && it.away) {
+              liveByPair.set(`${String(it.home).toLowerCase()} vs ${String(it.away).toLowerCase()}`, it);
+            }
+          });
+
+          STATE.matches = sortMatchesStrict(STATE.matches.map((m) => {
+            const pairKey = `${String(m.home || "").toLowerCase()} vs ${String(m.away || "").toLowerCase()}`;
+            const hit = (m.fixture_id != null ? liveById.get(m.fixture_id) : null) || liveByPair.get(pairKey);
+            return hit
+              ? {
+                  ...m,
+                  status: hit.status,
+                  status_short: hit.status_short,
+                  elapsed: hit.elapsed,
+                  score: hit.score,
+                  home_goals: hit.home_goals,
+                  away_goals: hit.away_goals,
+                  result: hit.score
+                }
+              : m;
+          }));
+
+          STATE.cards = STATE.cards.map((card) => {
+            const legs = parseLegs(card.legs, card.market);
+            let changed = false;
+            const patched = legs.map((leg) => {
+              const pairKey = `${String(leg.home || "").toLowerCase()} vs ${String(leg.away || "").toLowerCase()}`;
+              const hit = liveByPair.get(pairKey);
+              if (!hit) return leg;
+              changed = true;
+              return {
+                ...leg,
+                home_goals: hit.home_goals,
+                away_goals: hit.away_goals,
+                score: hit.score,
+                status_short: hit.status_short,
+                elapsed: hit.elapsed,
+                status: hit.status
+              };
+            });
+            return changed ? { ...card, legs: patched } : card;
+          });
+
+          renderAll();
+          if (!silent) showToast(`Live scores synced (${items.length} active)`);
+        } catch {
+          $("live-sync-status").textContent = "Live Sync: Auto (30m)";
+        }
+      }
+
       async function loadPrimaryData() {
         const primaryDate = targetDateForWindow(STATE.windowMode);
         $("updated-label").textContent = `Loading ${primaryDate} from Supabase…`;
@@ -1481,29 +1598,47 @@
             fetchJson(`/api/standings?date=${encodeURIComponent(primaryDate)}`)
           ];
           if (STATE.windowMode === "Today + Tomorrow") {
-            requests.push(fetchJson(`/api/today?date=${encodeURIComponent(formatLagDate(1))}`));
+            const tmrDate = formatLagDate(1);
+            requests.push(fetchJson(`/api/today?date=${encodeURIComponent(tmrDate)}`));
+            requests.push(fetchJson(`/api/standings?date=${encodeURIComponent(tmrDate)}`));
           }
 
           const results = await Promise.all(requests);
           const mainToday = results[0] || {};
           const mainStandings = results[1] || {};
           const extraTomorrow = results[2] || null;
+          const extraTomorrowStandings = results[3] || null;
 
-          STATE.cards = Array.isArray(mainToday.cards) ? mainToday.cards : [];
+          let activeCards = Array.isArray(mainToday.cards) ? mainToday.cards : [];
           let combinedMatches = Array.isArray(mainToday.matches) ? [...mainToday.matches] : [];
-          if (extraTomorrow && Array.isArray(extraTomorrow.matches)) {
-            combinedMatches = combinedMatches.concat(extraTomorrow.matches);
+          const mergedStandings = { ...groupStandings(mainStandings.standings ?? mainToday.standings) };
+
+          if (STATE.windowMode === "Today + Tomorrow" && extraTomorrow) {
+            const tmrCards = Array.isArray(extraTomorrow.cards) ? extraTomorrow.cards : [];
+            activeCards = mergeTodayAndTomorrowCards(activeCards, tmrCards);
+            if (Array.isArray(extraTomorrow.matches)) {
+              combinedMatches = combinedMatches.concat(extraTomorrow.matches);
+            }
+            if (extraTomorrowStandings) {
+              Object.assign(mergedStandings, groupStandings(extraTomorrowStandings.standings));
+            }
           }
+
+          STATE.cards = activeCards;
           STATE.matches = sortMatchesStrict(combinedMatches);
-          STATE.standings = groupStandings(mainStandings.standings ?? mainToday.standings);
+          STATE.standings = mergedStandings;
 
           populateLeagueFilter();
           renderAll();
 
           const now = new Date();
           const timeStr = now.toLocaleTimeString("en-GB", { timeZone: "Africa/Lagos", hour: "2-digit", minute: "2-digit" });
-          $("updated-label").textContent = `Updated ${timeStr} WAT · ${primaryDate}`;
+          $("updated-label").textContent = `Updated ${timeStr} WAT · ${STATE.windowMode === "Today + Tomorrow" ? `${formatLagDate(0)} + ${formatLagDate(1)}` : primaryDate}`;
           $("source-badge").textContent = mainToday.source || "Supabase";
+
+          if (STATE.windowMode === "Today" || STATE.windowMode === "Today + Tomorrow") {
+            syncTimedLiveScores(true);
+          }
         } catch (err) {
           $("updated-label").textContent = `Database sync notice (${err.message})`;
           renderAll();
@@ -1531,61 +1666,6 @@
         }
       }
 
-      async function refreshLiveScores() {
-        const activeDate = targetDateForWindow(STATE.windowMode);
-        showToast("Checking live scores…");
-        try {
-          const data = await fetchJson(`/api/scores?date=${encodeURIComponent(activeDate)}`);
-          const liveFixtures = Array.isArray(data.fixtures) ? data.fixtures : [];
-          if (!liveFixtures.length) {
-            showToast("No live fixtures right now");
-            return;
-          }
-          const liveMap = new Map();
-          liveFixtures.forEach((fx) => {
-            const fid = fx?.fixture?.id;
-            const home = fx?.teams?.home?.name;
-            const away = fx?.teams?.away?.name;
-            const goalsHome = fx?.goals?.home;
-            const goalsAway = fx?.goals?.away;
-            const shortStatus = fx?.fixture?.status?.short || "LIVE";
-            const elapsed = fx?.fixture?.status?.elapsed;
-            const scoreStr = (goalsHome != null && goalsAway != null) ? `${goalsHome} - ${goalsAway}` : shortStatus;
-            const info = {
-              status: normalizeStatus(shortStatus),
-              status_short: shortStatus,
-              elapsed,
-              score: scoreStr,
-              home_goals: goalsHome,
-              away_goals: goalsAway
-            };
-            if (fid != null) liveMap.set(`id:${fid}`, info);
-            if (home && away) liveMap.set(`pair:${home.toLowerCase()} vs ${away.toLowerCase()}`, info);
-          });
-
-          STATE.matches = sortMatchesStrict(STATE.matches.map((m) => {
-            const pairKey = `pair:${String(m.home || "").toLowerCase()} vs ${String(m.away || "").toLowerCase()}`;
-            const hit = liveMap.get(pairKey);
-            return hit
-              ? {
-                  ...m,
-                  status: hit.status,
-                  status_short: hit.status_short,
-                  elapsed: hit.elapsed,
-                  score: hit.score,
-                  home_goals: hit.home_goals,
-                  away_goals: hit.away_goals,
-                  result: hit.score
-                }
-              : m;
-          }));
-          renderMatches();
-          showToast(`Updated ${liveFixtures.length} live fixtures`);
-        } catch (err) {
-          showToast(`Live score refresh failed: ${err.message}`);
-        }
-      }
-
       function populateLeagueFilter() {
         const select = $("league-filter");
         const previous = STATE.league;
@@ -1609,8 +1689,9 @@
         const league = String(match.league || "");
         if (q && !teams.includes(q) && !league.toLowerCase().includes(q)) return false;
         if (STATE.league !== "All leagues" && league !== STATE.league) return false;
-        if (STATE.windowMode === "Yesterday" && normalizeStatus(match.status) !== "Finished") return false;
-        if (STATE.windowMode === "Tomorrow" && normalizeStatus(match.status) !== "Upcoming") return false;
+        const st = extractStatusFromResult(match);
+        if (STATE.windowMode === "Yesterday" && st !== "Finished") return false;
+        if (STATE.windowMode === "Tomorrow" && st !== "Upcoming") return false;
         return true;
       }
 
@@ -1801,7 +1882,7 @@
         }
 
         $("matches-list").innerHTML = list.map((m, idx) => {
-          const status = normalizeStatus(m.status);
+          const status = extractStatusFromResult(m);
           const home = m.home || "Home";
           const away = m.away || "Away";
           const { hg, ag } = parseScoreNumbers(m);
@@ -1814,7 +1895,7 @@
             const suppliedOdd = m.market_odds && m.market_odds[mkt.name] != null
               ? Number(m.market_odds[mkt.name]).toFixed(2)
               : mkt.fallbackOdd.toFixed(2);
-            const mktStatus = evaluateMarketBadge(mkt.name, { ...m, home_goals: hg, away_goals: ag, score: scoreText });
+            const mktStatus = evaluateMarketBadge(mkt.name, { ...m, status, home_goals: hg, away_goals: ag, score: scoreText });
             return `
               <div class="market-box">
                 <span class="mono" style="font-size:9px;color:var(--gold);">#${mIdx + 1}</span>
@@ -2100,10 +2181,15 @@
           showToast(STATE.alertsEnabled ? "Browser alerts enabled" : "Browser alerts turned off");
         });
 
-        $("live-scores-btn").addEventListener("click", refreshLiveScores);
         $("fab-refresh").addEventListener("click", loadPrimaryData);
         $("fab-top").addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
         $("fab-bottom").addEventListener("click", () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" }));
+
+        window.setInterval(() => {
+          if (STATE.windowMode === "Today" || STATE.windowMode === "Today + Tomorrow") {
+            syncTimedLiveScores(true);
+          }
+        }, 5 * 60 * 1000);
       }
 
       syncAlertsButton();
