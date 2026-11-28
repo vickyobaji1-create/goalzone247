@@ -391,12 +391,13 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 20px;
+      min-width: 22px;
       height: 20px;
+      padding: 0 5px;
       border-radius: 9999px;
       background: var(--gold);
       color: #0f1417;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 500;
       flex-shrink: 0;
     }
@@ -438,6 +439,17 @@
       white-space: nowrap;
     }
 
+    .progress-pill {
+      padding: 2px 7px;
+      border-radius: 9999px;
+      border: 1px solid var(--border2);
+      background: #161c20;
+      color: #d5dfe3;
+      font-size: 10px;
+      font-weight: 400;
+      white-space: nowrap;
+    }
+
     .result-pill {
       padding: 2px 7px;
       border-radius: 9999px;
@@ -451,16 +463,19 @@
     .result-pill.won {
       border-color: var(--green);
       color: var(--green);
+      background: rgba(40, 209, 124, 0.1);
     }
 
     .result-pill.lost {
       border-color: var(--red);
       color: var(--red);
+      background: rgba(255, 107, 107, 0.1);
     }
 
     .result-pill.live {
       border-color: var(--gold);
       color: var(--gold);
+      background: rgba(242, 189, 84, 0.1);
     }
 
     .acc-actions {
@@ -471,7 +486,7 @@
     }
 
     .mini-btn {
-      padding: 4px 8px;
+      padding: 4px 7px;
       border-radius: 6px;
       background: #2a3238;
       color: #d5dfe3;
@@ -484,6 +499,12 @@
       background: var(--gold);
       color: #141a1e;
       font-weight: 500;
+    }
+
+    .mini-btn.wa {
+      background: #1d3a2c;
+      border: 1px solid #2b5942;
+      color: var(--green2);
     }
 
     .mini-btn.done {
@@ -516,8 +537,14 @@
       font-weight: 400;
     }
 
-    .leg-sub {
+    .leg-meta-line {
       margin-top: 2px;
+      font-size: 10px;
+      color: var(--muted2);
+    }
+
+    .leg-sub {
+      margin-top: 3px;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
@@ -533,7 +560,6 @@
       font-weight: 400;
     }
 
-    /* Single 2.50 Rollover section with side-by-side Morning / Evening buttons and Card 1 / Card 2 switcher */
     .rollover-box {
       margin-top: 8px;
       border-radius: 12px;
@@ -619,6 +645,31 @@
       flex-wrap: wrap;
     }
 
+    .ad-slot {
+      margin-top: 14px;
+      border-radius: 12px;
+      border: 1px dashed var(--border2);
+      background: #161c20;
+      padding: 10px 12px;
+      min-height: 76px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 4px;
+    }
+
+    .ad-label {
+      font-size: 10px;
+      color: var(--muted2);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .ad-placeholder {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
     .matches-list {
       margin-top: 8px;
       display: flex;
@@ -696,7 +747,7 @@
 
     @media (min-width: 540px) {
       .match-grid {
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
       }
     }
 
@@ -774,24 +825,25 @@
 
     .fab-stack {
       position: fixed;
-      right: 10px;
-      bottom: 14px;
+      right: 8px;
+      bottom: 12px;
       z-index: 40;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 5px;
     }
 
     .fab-btn {
-      width: 34px;
-      height: 34px;
+      width: 28px;
+      height: 28px;
       border-radius: 9999px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 500;
-      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+      opacity: 0.9;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
     }
 
     .fab-refresh {
@@ -890,21 +942,48 @@
         </div>
       </header>
 
-      <section aria-label="10-day match history">
+      <!-- 1. 2.50 Rollover Card first -->
+      <section aria-label="2.50 Rollover Card">
         <div class="section-head">
-          <h2 class="section-title">Match History (Supabase)</h2>
-          <span class="section-count mono" id="history-count">Last 10 days</span>
+          <h2 class="section-title">#1 · 2.50 Rollover Card</h2>
+          <span class="section-count mono">Morning &amp; Evening Sessions</span>
         </div>
-        <p class="sub-line">Select any date to load recorded cards and fixtures from Supabase without calling API-Football.</p>
-        <div class="history-tabs" id="history-tabs" role="tablist" aria-label="Select history date"></div>
-        <div id="history-output"></div>
+        <p class="sub-line">Tap Morning or Evening side by side, then switch between Card 1 and Card 2.</p>
+        <div class="rollover-box">
+          <div class="session-row" role="tablist" aria-label="2.50 Rollover session">
+            <button type="button" class="session-btn active" data-rollover-session="Morning" aria-selected="true">Morning 2.50 Rollover</button>
+            <button type="button" class="session-btn" data-rollover-session="Evening" aria-selected="false">Evening 2.50 Rollover</button>
+          </div>
+          <div class="subcard-row" role="tablist" aria-label="2.50 Rollover card number">
+            <button type="button" class="subcard-btn active" data-rollover-slot="1" aria-selected="true">Card 1</button>
+            <button type="button" class="subcard-btn" data-rollover-slot="2" aria-selected="false">Card 2</button>
+          </div>
+          <div class="rollover-detail" id="rollover-panel"></div>
+        </div>
       </section>
+
+      <!-- 2. Early Morning & Mix Accumulators right below 2.50 Rollover -->
+      <section aria-label="Early Morning and Mix Accumulators">
+        <div class="section-head">
+          <h2 class="section-title">#2 · Early Morning &amp; Mix Accumulators</h2>
+          <span class="section-count mono" id="special-cards-count">5 cards</span>
+        </div>
+        <p class="sub-line">Early Morning, Morning, Midnight, and Mega Mix (12.00+ &amp; 30.00+) cards across goal markets.</p>
+        <div class="special-stack" id="special-cards"></div>
+      </section>
+
+      <!-- AdSense-ready slot between major accumulator blocks -->
+      <div class="ad-slot" id="adsense-slot-1" aria-label="Advertisement">
+        <span class="ad-label mono">Sponsored / AdSense Slot</span>
+        <div class="ad-placeholder" id="adsense-inner-1">Ad space ready for Google AdSense placement.</div>
+      </div>
     </div>
 
+    <!-- 3. 12 Individual Market Accumulator Cards underneath -->
     <section aria-label="Market Accumulators">
       <div class="narrow-col">
         <div class="section-head">
-          <h2 class="section-title">Individual Market Accumulators</h2>
+          <h2 class="section-title">#3 · Individual Market Accumulators</h2>
           <span class="section-count mono" id="market-cards-count">12 markets</span>
         </div>
         <p class="sub-line">Each market has its own accumulator card. Legs are ordered Live → Upcoming → Finished.</p>
@@ -928,40 +1007,12 @@
     </section>
 
     <div class="narrow-col">
-      <section aria-label="2.50 Rollover Card">
-        <div class="section-head">
-          <h2 class="section-title">2.50 Rollover Card</h2>
-          <span class="section-count mono">Morning &amp; Evening Sessions</span>
-        </div>
-        <p class="sub-line">Tap Morning or Evening side by side, then switch between Card 1 and Card 2.</p>
-        <div class="rollover-box">
-          <div class="session-row" role="tablist" aria-label="2.50 Rollover session">
-            <button type="button" class="session-btn active" data-rollover-session="Morning" aria-selected="true">Morning 2.50 Rollover</button>
-            <button type="button" class="session-btn" data-rollover-session="Evening" aria-selected="false">Evening 2.50 Rollover</button>
-          </div>
-          <div class="subcard-row" role="tablist" aria-label="2.50 Rollover card number">
-            <button type="button" class="subcard-btn active" data-rollover-slot="1" aria-selected="true">Card 1</button>
-            <button type="button" class="subcard-btn" data-rollover-slot="2" aria-selected="false">Card 2</button>
-          </div>
-          <div class="rollover-detail" id="rollover-panel"></div>
-        </div>
-      </section>
-
-      <section aria-label="Time-Window and Mix Accumulators">
-        <div class="section-head">
-          <h2 class="section-title">Time-Window &amp; Mix Accumulators</h2>
-          <span class="section-count mono">4 cards</span>
-        </div>
-        <p class="sub-line">Early Morning, Morning, Midnight, and Mega Mix accumulators.</p>
-        <div class="special-stack" id="special-cards"></div>
-      </section>
-
       <section aria-label="Available Matches">
         <div class="section-head">
           <h2 class="section-title">All Fixtures &amp; Predictions</h2>
           <span class="section-count mono" id="matches-count">0 shown</span>
         </div>
-        <p class="sub-line">Each fixture displays key goal market prices and status cleanly inside the card.</p>
+        <p class="sub-line">Sorted Live → Upcoming → Finished. Each fixture shows all 12 numbered markets and status badges.</p>
         <div class="matches-list" id="matches-list"></div>
       </section>
 
@@ -975,6 +1026,16 @@
           <select id="standings-league-select" class="select-box" aria-label="Select standing league"></select>
         </div>
         <div class="standings-swipe" id="standings-list"></div>
+      </section>
+
+      <section aria-label="10-day match history">
+        <div class="section-head">
+          <h2 class="section-title">Match History (Supabase)</h2>
+          <span class="section-count mono" id="history-count">Last 10 days</span>
+        </div>
+        <p class="sub-line">Select any date to load recorded cards and fixtures from Supabase without calling API-Football.</p>
+        <div class="history-tabs" id="history-tabs" role="tablist" aria-label="Select history date"></div>
+        <div id="history-output"></div>
       </section>
 
       <footer class="site-footer">
@@ -994,33 +1055,26 @@
   <script>
     (function () {
       const MARKETS_12 = [
-        { name: "Over 1.5", short: "O1.5", fallbackOdd: 1.32 },
-        { name: "Over 2.5", short: "O2.5", fallbackOdd: 1.95 },
-        { name: "BTTS", short: "BTTS", fallbackOdd: 1.85 },
-        { name: "Home Over 1.5", short: "H-O1.5", fallbackOdd: 1.75 },
-        { name: "Away Over 1.5", short: "A-O1.5", fallbackOdd: 2.10 },
-        { name: "1X + BTTS", short: "1X+BTTS", fallbackOdd: 2.30 },
-        { name: "X2 + BTTS", short: "X2+BTTS", fallbackOdd: 2.40 },
-        { name: "Home Win + Over 1.5", short: "HW+O1.5", fallbackOdd: 2.05 },
-        { name: "Away Win + Over 1.5", short: "AW+O1.5", fallbackOdd: 2.60 },
-        { name: "First-Half Over 0.5", short: "FH-O0.5", fallbackOdd: 1.45 },
-        { name: "Home Score Over 0.5", short: "HS-O0.5", fallbackOdd: 1.25 },
-        { name: "Away Score Over 0.5", short: "AS-O0.5", fallbackOdd: 1.40 }
-      ];
-
-      const MATCH_BOX_MARKETS = [
-        { name: "Over 1.5", short: "O1.5", fallbackOdd: 1.32 },
-        { name: "Over 2.5", short: "O2.5", fallbackOdd: 1.95 },
-        { name: "BTTS", short: "BTTS", fallbackOdd: 1.85 },
-        { name: "Home Over 1.5", short: "H-O1.5", fallbackOdd: 1.75 },
-        { name: "Away Over 1.5", short: "A-O1.5", fallbackOdd: 2.10 }
+        { name: "Over 1.5", short: "O1.5", fallbackOdd: 1.24 },
+        { name: "Over 2.5", short: "O2.5", fallbackOdd: 1.72 },
+        { name: "BTTS", short: "BTTS", fallbackOdd: 1.68 },
+        { name: "Home Over 1.5", short: "H-O1.5", fallbackOdd: 1.55 },
+        { name: "Away Over 1.5", short: "A-O1.5", fallbackOdd: 1.72 },
+        { name: "1X + BTTS", short: "1X+BTTS", fallbackOdd: 1.85 },
+        { name: "X2 + BTTS", short: "X2+BTTS", fallbackOdd: 1.95 },
+        { name: "Home Win + Over 1.5", short: "HW+O1.5", fallbackOdd: 1.78 },
+        { name: "Away Win + Over 1.5", short: "AW+O1.5", fallbackOdd: 2.10 },
+        { name: "First-Half Over 0.5", short: "FH-O0.5", fallbackOdd: 1.32 },
+        { name: "Home Score Over 0.5", short: "HS-O0.5", fallbackOdd: 1.18 },
+        { name: "Away Score Over 0.5", short: "AS-O0.5", fallbackOdd: 1.28 }
       ];
 
       const MIX_CARD_LABELS = [
         "Early Morning Accumulator",
         "Morning Accumulator",
         "Midnight Accumulator",
-        "Mega Mix Accumulator"
+        "Mega Mix Accumulator (12.00+)",
+        "Mega Mix Accumulator (30.00+)"
       ];
 
       const STATE = {
@@ -1038,10 +1092,11 @@
         historyMatches: [],
         historyLoading: false,
         historyError: "",
-        alertsEnabled: false,
+        alertsEnabled: localStorage.getItem("gz247_alerts") === "1",
         collapsedIds: new Set(),
         copiedIds: new Set(),
-        standingsFilter: "__ALL__"
+        standingsFilter: "__ALL__",
+        slipStore: new Map()
       };
 
       const $ = (id) => document.getElementById(id);
@@ -1054,6 +1109,15 @@
         const m = String(d.getMonth() + 1).padStart(2, "0");
         const day = String(d.getDate()).padStart(2, "0");
         return `${y}-${m}-${day}`;
+      }
+
+      function formatKickoffWat(raw) {
+        if (!raw) return { dateStr: "", timeStr: "" };
+        const dt = new Date(raw);
+        if (Number.isNaN(dt.getTime())) return { dateStr: String(raw).slice(0, 10), timeStr: "" };
+        const dateStr = dt.toLocaleDateString("en-GB", { timeZone: "Africa/Lagos", day: "2-digit", month: "2-digit" });
+        const timeStr = dt.toLocaleTimeString("en-GB", { timeZone: "Africa/Lagos", hour: "2-digit", minute: "2-digit" });
+        return { dateStr, timeStr };
       }
 
       function buildTenDayTabs() {
@@ -1088,7 +1152,48 @@
           .replace(/"/g, "&quot;");
       }
 
-      function parseLegs(rawLegs) {
+      function normalizeStatus(raw) {
+        const val = String(raw || "").trim().toUpperCase();
+        if (["LIVE", "1H", "2H", "HT", "ET", "P", "INT"].includes(val)) return "Live";
+        if (["WON"].includes(val)) return "Won";
+        if (["LOST", "LOSS"].includes(val)) return "Lost";
+        if (["FINISHED", "FT", "AET", "PEN"].includes(val)) return "Finished";
+        return "Upcoming";
+      }
+
+      function evaluateLegOutcome(marketName, leg) {
+        const explicit = String(leg.result || "").toUpperCase();
+        if (explicit === "WON" || explicit === "WIN") return "Won";
+        if (explicit === "LOST" || explicit === "LOSS") return "Lost";
+
+        const hg = leg.home_goals != null ? Number(leg.home_goals) : null;
+        const ag = leg.away_goals != null ? Number(leg.away_goals) : null;
+        if (hg == null || ag == null || Number.isNaN(hg) || Number.isNaN(ag)) {
+          return normalizeStatus(leg.status);
+        }
+
+        const total = hg + ag;
+        const btts = hg >= 1 && ag >= 1;
+        const mkt = String(marketName || leg.market || "");
+        let won = null;
+        if (mkt === "Over 1.5") won = total >= 2;
+        else if (mkt === "Over 2.5") won = total >= 3;
+        else if (mkt === "BTTS") won = btts;
+        else if (mkt === "Home Over 1.5") won = hg >= 2;
+        else if (mkt === "Away Over 1.5") won = ag >= 2;
+        else if (mkt === "Home Score Over 0.5") won = hg >= 1;
+        else if (mkt === "Away Score Over 0.5") won = ag >= 1;
+        else if (mkt === "Home Win + Over 1.5") won = hg > ag && total >= 2;
+        else if (mkt === "Away Win + Over 1.5") won = ag > hg && total >= 2;
+        else if (mkt === "1X + BTTS") won = hg >= ag && btts;
+        else if (mkt === "X2 + BTTS") won = ag >= hg && btts;
+
+        if (won === true) return "Won";
+        if (won === false && normalizeStatus(leg.status) === "Finished") return "Lost";
+        return normalizeStatus(leg.status);
+      }
+
+      function parseLegs(rawLegs, fallbackMarket = "Goal Market") {
         let arr = [];
         if (Array.isArray(rawLegs)) {
           arr = rawLegs;
@@ -1103,43 +1208,141 @@
         return arr.map((leg, idx) => {
           const item = leg && typeof leg === "object" ? leg : {};
           const teams = item.teams || `${item.home || "Home"} vs ${item.away || "Away"}`;
-          const status = normalizeStatus(item.status || item.result || "Upcoming");
+          const mkt = item.market || fallbackMarket;
+          const outcome = evaluateLegOutcome(mkt, item);
+          const { dateStr, timeStr } = formatKickoffWat(item.kickoff || item.date || "");
+          const score = item.score || (item.home_goals != null && item.away_goals != null ? `${item.home_goals}-${item.away_goals}` : "");
           return {
             id: item.fixture_id || `${idx}`,
             teams,
             home: item.home || "",
             away: item.away || "",
+            country: item.country || "Intl",
             league: item.league || "Football",
-            kickoff: item.kickoff || item.date || "",
-            market: item.market || "Goal Market",
+            dateStr,
+            timeStr,
+            market: mkt,
             odds: item.odds ?? item.odd ?? "—",
-            status,
-            score: item.score || ""
+            status: outcome,
+            score
           };
         });
       }
 
-      function normalizeStatus(raw) {
-        const val = String(raw || "").trim().toUpperCase();
-        if (["LIVE", "1H", "2H", "HT", "ET", "P", "INT"].includes(val)) return "Live";
-        if (["FINISHED", "FT", "AET", "PEN", "WON", "LOST"].includes(val)) return "Finished";
-        return "Upcoming";
+      function sortByStatus(items) {
+        const rank = { Live: 0, Won: 1, Upcoming: 2, Lost: 3, Finished: 4 };
+        return [...items].sort((a, b) => (rank[normalizeStatus(a.status)] ?? 2) - (rank[normalizeStatus(b.status)] ?? 2));
       }
 
-      function sortLegs(legs) {
-        const rank = { Live: 0, Upcoming: 1, Finished: 2 };
-        return [...legs].sort((a, b) => (rank[a.status] ?? 1) - (rank[b.status] ?? 1));
+      function badgeClass(statusText) {
+        const s = String(statusText || "").toLowerCase();
+        if (s === "won") return "won";
+        if (s === "lost") return "lost";
+        if (s === "live") return "live";
+        return "";
       }
 
-      function computeCardBadge(card, legs) {
+      function computeCardSummary(card, legs) {
+        const totalLegs = legs.length;
+        const wonCount = legs.filter((l) => l.status === "Won").length;
+        const liveCount = legs.filter((l) => l.status === "Live").length;
+        const progressText = totalLegs ? `${wonCount}/${totalLegs} won` : `0/0 won`;
+
         const rawResult = String(card.result || card.status || "").toUpperCase();
-        if (rawResult === "LOST" || legs.some((l) => String(l.status).toUpperCase() === "LOST")) {
-          return { text: "Lost", cls: "lost" };
+        if (rawResult === "LOST" || legs.some((l) => l.status === "Lost")) {
+          return { text: "Lost", cls: "lost", progressText, wonCount, liveCount, totalLegs };
         }
-        if (rawResult === "WON") return { text: "Won", cls: "won" };
-        if (legs.some((l) => l.status === "Live")) return { text: "Live", cls: "live" };
-        if (legs.some((l) => l.status === "Upcoming")) return { text: "Pending", cls: "" };
-        return { text: rawResult || "Pending", cls: "" };
+        if (totalLegs > 0 && wonCount === totalLegs) {
+          return { text: "Won", cls: "won", progressText, wonCount, liveCount, totalLegs };
+        }
+        if (liveCount > 0) {
+          return { text: "Live", cls: "live", progressText, wonCount, liveCount, totalLegs };
+        }
+        return { text: "Pending", cls: "", progressText, wonCount, liveCount, totalLegs };
+      }
+
+      function formatSlipText(title, oddsText, targetText, progressText, legs) {
+        const lines = [`GOALZONE247 — ${title} (${oddsText} odds | Target ${targetText} | ${progressText})`];
+        legs.forEach((leg, i) => {
+          const meta = [leg.country, leg.league, leg.dateStr, leg.timeStr].filter(Boolean).join(" · ");
+          const sc = leg.score ? ` [${leg.score}]` : "";
+          lines.push(`${i + 1}. ${leg.teams}${sc} — ${leg.market} @${leg.odds} (${leg.status}) [${meta}]`);
+        });
+        return lines.join("\n");
+      }
+
+      function shareSlipImage(slipData) {
+        const canvas = document.createElement("canvas");
+        const legs = slipData.legs || [];
+        const width = 640;
+        const height = Math.max(260, 140 + legs.length * 46);
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          showToast("Image export not supported on this browser");
+          return;
+        }
+
+        ctx.fillStyle = "#0f1417";
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.fillStyle = "#1a2126";
+        ctx.fillRect(16, 16, width - 32, height - 32);
+
+        ctx.fillStyle = "#28d17c";
+        ctx.font = "bold 20px Inter, sans-serif";
+        ctx.fillText("GOALZONE247", 32, 48);
+
+        ctx.fillStyle = "#eef3f5";
+        ctx.font = "bold 16px Inter, sans-serif";
+        ctx.fillText(`${slipData.title}  •  ${slipData.oddsText} odds  •  ${slipData.progressText}`, 32, 76);
+
+        ctx.fillStyle = "#9aa8af";
+        ctx.font = "12px Inter, sans-serif";
+        ctx.fillText(`Target: ${slipData.targetText}  •  Status: ${slipData.statusText}`, 32, 98);
+
+        let y = 128;
+        legs.forEach((leg, idx) => {
+          if (y > height - 28) return;
+          ctx.fillStyle = "#eef3f5";
+          ctx.font = "13px Inter, sans-serif";
+          ctx.fillText(`${idx + 1}. ${leg.teams} (${leg.market} @${leg.odds})`, 32, y);
+
+          ctx.fillStyle = "#9aa8af";
+          ctx.font = "11px Inter, sans-serif";
+          const extra = [leg.country, leg.league, leg.dateStr, leg.timeStr, leg.score ? `Score: ${leg.score}` : "", leg.status].filter(Boolean).join(" | ");
+          ctx.fillText(extra, 46, y + 16);
+          y += 42;
+        });
+
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            showToast("Could not generate slip image");
+            return;
+          }
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${slipData.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-slip.png`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 4000);
+          showToast("Slip image downloaded");
+        }, "image/png");
+      }
+
+      function shareSlipWhatsApp(slipData) {
+        const text = formatSlipText(
+          slipData.title,
+          slipData.oddsText,
+          slipData.targetText,
+          slipData.progressText,
+          slipData.legs || []
+        );
+        const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+        window.open(url, "_blank", "noopener,noreferrer");
       }
 
       function groupStandings(rawStandings) {
@@ -1197,7 +1400,7 @@
           if (extraTomorrow && Array.isArray(extraTomorrow.matches)) {
             combinedMatches = combinedMatches.concat(extraTomorrow.matches);
           }
-          STATE.matches = combinedMatches;
+          STATE.matches = sortByStatus(combinedMatches);
           STATE.standings = groupStandings(mainStandings.standings ?? mainToday.standings);
 
           populateLeagueFilter();
@@ -1253,16 +1456,23 @@
             const goalsAway = fx?.goals?.away;
             const shortStatus = fx?.fixture?.status?.short || "LIVE";
             const scoreStr = (goalsHome != null && goalsAway != null) ? `${goalsHome}-${goalsAway}` : shortStatus;
-            const info = { status: normalizeStatus(shortStatus), score: scoreStr };
+            const info = {
+              status: normalizeStatus(shortStatus),
+              score: scoreStr,
+              home_goals: goalsHome,
+              away_goals: goalsAway
+            };
             if (fid != null) liveMap.set(`id:${fid}`, info);
             if (home && away) liveMap.set(`pair:${home.toLowerCase()} vs ${away.toLowerCase()}`, info);
           });
 
-          STATE.matches = STATE.matches.map((m) => {
+          STATE.matches = sortByStatus(STATE.matches.map((m) => {
             const pairKey = `pair:${String(m.home || "").toLowerCase()} vs ${String(m.away || "").toLowerCase()}`;
             const hit = liveMap.get(pairKey);
-            return hit ? { ...m, status: hit.status, score: hit.score, result: hit.score } : m;
-          });
+            return hit
+              ? { ...m, status: hit.status, score: hit.score, home_goals: hit.home_goals, away_goals: hit.away_goals, result: hit.score }
+              : m;
+          }));
           renderMatches();
           showToast(`Updated ${liveFixtures.length} live fixtures`);
         } catch (err) {
@@ -1298,45 +1508,71 @@
         return true;
       }
 
+      function renderLegRows(legs) {
+        if (!legs.length) return "";
+        return `<div class="acc-legs">${legs.map((leg, i) => {
+          const metaParts = [leg.country, leg.league, leg.dateStr, leg.timeStr].filter(Boolean).join(" · ");
+          const scorePart = leg.score ? ` · ${leg.score}` : "";
+          return `
+            <div class="leg-row">
+              <div class="leg-teams">${i + 1}. ${escapeHtml(leg.teams)}</div>
+              <div class="leg-meta-line">${escapeHtml(metaParts)}</div>
+              <div class="leg-sub">
+                <span>${escapeHtml(leg.market)}</span>
+                <span class="leg-odd mono">@${escapeHtml(leg.odds)}${escapeHtml(scorePart)}</span>
+                <span class="result-pill ${badgeClass(leg.status)}">${escapeHtml(leg.status)}</span>
+              </div>
+            </div>
+          `;
+        }).join("")}</div>`;
+      }
+
+      function registerSlip(slipKey, title, oddsText, targetText, statusText, progressText, legs) {
+        STATE.slipStore.set(slipKey, { title, oddsText, targetText, statusText, progressText, legs });
+      }
+
+      function slipButtonsHtml(slipKey, copied) {
+        return `
+          <div class="acc-actions">
+            <button type="button" class="mini-btn ${copied ? "done" : "gold"}" data-copy-slip="${escapeHtml(slipKey)}">${copied ? "Copied ✓" : "Copy Slip"}</button>
+            <button type="button" class="mini-btn" data-img-slip="${escapeHtml(slipKey)}">Image</button>
+            <button type="button" class="mini-btn wa" data-wa-slip="${escapeHtml(slipKey)}">WhatsApp</button>
+          </div>
+        `;
+      }
+
       function buildMarketCardHtml(marketMeta, cardRecord, index) {
         const cardId = `market-${marketMeta.name}`;
         const collapsed = STATE.collapsedIds.has(cardId);
         const copied = STATE.copiedIds.has(cardId);
-        const legs = sortLegs(parseLegs(cardRecord?.legs));
-        const badge = computeCardBadge(cardRecord || {}, legs);
+        const legs = sortByStatus(parseLegs(cardRecord?.legs, marketMeta.name));
+        const summary = computeCardSummary(cardRecord || {}, legs);
         const oddsText = cardRecord?.total_odds ?? "—";
         const targetText = cardRecord?.target || "12.00+";
+
+        registerSlip(cardId, marketMeta.name, oddsText, targetText, summary.text, summary.progressText, legs);
 
         const legsHtml = collapsed
           ? `<div class="empty-box" style="margin-top:0;">${legs.length} legs hidden. Click + to expand.</div>`
           : legs.length
-            ? `<div class="acc-legs">${legs.map((leg, i) => `
-                <div class="leg-row">
-                  <div class="leg-teams">${i + 1}. ${escapeHtml(leg.teams)}</div>
-                  <div class="leg-sub">
-                    <span>${escapeHtml(leg.league)}</span>
-                    <span class="leg-odd mono">@${escapeHtml(leg.odds)} · ${escapeHtml(leg.status)}${leg.score ? ` (${escapeHtml(leg.score)})` : ""}</span>
-                  </div>
-                </div>
-              `).join("")}</div>`
+            ? renderLegRows(legs)
             : `<div class="empty-box" style="margin-top:0;">No saved legs for ${escapeHtml(marketMeta.name)} yet.</div>`;
 
         return `
           <article class="acc-card" data-card-id="${escapeHtml(cardId)}">
             <div class="acc-card-top">
               <div class="acc-card-title-row">
-                <span class="acc-num mono">${index + 1}</span>
+                <span class="acc-num mono">#${index + 1}</span>
                 <h3 class="acc-title">${escapeHtml(marketMeta.name)}</h3>
                 <button type="button" class="mini-btn" data-toggle-card="${escapeHtml(cardId)}" aria-label="Toggle ${escapeHtml(marketMeta.name)}">${collapsed ? "+" : "–"}</button>
               </div>
               <div class="acc-meta-pills">
                 <span class="odds-pill mono">${escapeHtml(oddsText)} odds</span>
                 <span class="target-pill mono">Target ${escapeHtml(targetText)}</span>
-                <span class="result-pill ${badge.cls}">${escapeHtml(badge.text)}</span>
+                <span class="progress-pill mono">${escapeHtml(summary.progressText)}</span>
+                <span class="result-pill ${summary.cls}">${escapeHtml(summary.text)}</span>
               </div>
-              <div class="acc-actions">
-                <button type="button" class="mini-btn ${copied ? "done" : "gold"}" data-copy-card="${escapeHtml(cardId)}">${copied ? "Copied ✓" : "Copy Slip"}</button>
-              </div>
+              ${slipButtonsHtml(cardId, copied)}
             </div>
             ${legsHtml}
           </article>
@@ -1382,30 +1618,30 @@
 
         const key = `2.50 rollover - ${STATE.rolloverSession} card ${STATE.rolloverSlot}`.toLowerCase();
         const found = STATE.cards.find((c) => String(c?.market || "").trim().toLowerCase() === key);
-        const legs = sortLegs(parseLegs(found?.legs));
-        const badge = computeCardBadge(found || {}, legs);
         const heading = `${STATE.rolloverSession} 2.50 Rollover — Card ${STATE.rolloverSlot}`;
+        const legs = sortByStatus(parseLegs(found?.legs, heading));
+        const summary = computeCardSummary(found || {}, legs);
+        const oddsText = found?.total_odds ?? "—";
+        const targetText = found?.target || "2.50+";
+        const slipKey = `rollover-${STATE.rolloverSession}-${STATE.rolloverSlot}`;
+        const copied = STATE.copiedIds.has(slipKey);
+
+        registerSlip(slipKey, heading, oddsText, targetText, summary.text, summary.progressText, legs);
 
         $("rollover-panel").innerHTML = `
           <div class="special-head">
-            <h3 style="font-size:14px;font-weight:600;">${escapeHtml(heading)}</h3>
+            <h3 style="font-size:14px;font-weight:600;">#1 · ${escapeHtml(heading)}</h3>
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-              <span class="odds-pill mono">${escapeHtml(found?.total_odds ?? "—")} odds</span>
-              <span class="target-pill mono">Target ${escapeHtml(found?.target || "2.50+")}</span>
-              <span class="result-pill ${badge.cls}">${escapeHtml(badge.text)}</span>
+              <span class="odds-pill mono">${escapeHtml(oddsText)} odds</span>
+              <span class="target-pill mono">Target ${escapeHtml(targetText)}</span>
+              <span class="progress-pill mono">${escapeHtml(summary.progressText)}</span>
+              <span class="result-pill ${summary.cls}">${escapeHtml(summary.text)}</span>
             </div>
           </div>
+          ${slipButtonsHtml(slipKey, copied)}
           ${legs.length
-            ? `<div class="acc-legs" style="padding:8px 0 0;">${legs.map((leg, i) => `
-                <div class="leg-row">
-                  <div class="leg-teams">${i + 1}. ${escapeHtml(leg.teams)}</div>
-                  <div class="leg-sub">
-                    <span>${escapeHtml(leg.league)} · ${escapeHtml(leg.market)}</span>
-                    <span class="leg-odd mono">@${escapeHtml(leg.odds)} · ${escapeHtml(leg.status)}</span>
-                  </div>
-                </div>
-              `).join("")}</div>`
-            : `<p class="sub-line" style="margin-top:6px;">No legs recorded for ${escapeHtml(heading)} yet.</p>`}
+            ? renderLegRows(legs)
+            : `<p class="sub-line" style="margin-top:8px;">No legs recorded for ${escapeHtml(heading)} yet.</p>`}
         `;
       }
 
@@ -1415,39 +1651,39 @@
           if (c && c.market) byName.set(String(c.market).trim().toLowerCase(), c);
         });
 
-        $("special-cards").innerHTML = MIX_CARD_LABELS.map((label) => {
+        $("special-cards").innerHTML = MIX_CARD_LABELS.map((label, idx) => {
           const found = byName.get(label.toLowerCase());
-          const legs = sortLegs(parseLegs(found?.legs));
-          const badge = computeCardBadge(found || {}, legs);
+          const legs = sortByStatus(parseLegs(found?.legs, label));
+          const summary = computeCardSummary(found || {}, legs);
+          const oddsText = found?.total_odds ?? "—";
+          const targetText = found?.target || (label.includes("30.00+") ? "30.00+" : "12.00+");
+          const slipKey = `special-${idx}`;
+          const copied = STATE.copiedIds.has(slipKey);
+
+          registerSlip(slipKey, label, oddsText, targetText, summary.text, summary.progressText, legs);
 
           return `
             <article class="special-card">
               <div class="special-head">
-                <h3 style="font-size:14px;font-weight:600;">${escapeHtml(label)}</h3>
+                <h3 style="font-size:14px;font-weight:600;">#${idx + 1} · ${escapeHtml(label)}</h3>
                 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                  <span class="odds-pill mono">${escapeHtml(found?.total_odds ?? "—")} odds</span>
-                  <span class="target-pill mono">Target ${escapeHtml(found?.target || "12.00+")}</span>
-                  <span class="result-pill ${badge.cls}">${escapeHtml(badge.text)}</span>
+                  <span class="odds-pill mono">${escapeHtml(oddsText)} odds</span>
+                  <span class="target-pill mono">Target ${escapeHtml(targetText)}</span>
+                  <span class="progress-pill mono">${escapeHtml(summary.progressText)}</span>
+                  <span class="result-pill ${summary.cls}">${escapeHtml(summary.text)}</span>
                 </div>
               </div>
+              ${slipButtonsHtml(slipKey, copied)}
               ${legs.length
-                ? `<div class="acc-legs" style="padding:8px 0 0;">${legs.map((leg, i) => `
-                    <div class="leg-row">
-                      <div class="leg-teams">${i + 1}. ${escapeHtml(leg.teams)}</div>
-                      <div class="leg-sub">
-                        <span>${escapeHtml(leg.league)} · ${escapeHtml(leg.market)}</span>
-                        <span class="leg-odd mono">@${escapeHtml(leg.odds)} · ${escapeHtml(leg.status)}</span>
-                      </div>
-                    </div>
-                  `).join("")}</div>`
-                : `<p class="sub-line" style="margin-top:6px;">No ${escapeHtml(label)} legs recorded for this date yet.</p>`}
+                ? renderLegRows(legs)
+                : `<p class="sub-line" style="margin-top:8px;">No ${escapeHtml(label)} legs recorded for this date yet.</p>`}
             </article>
           `;
         }).join("");
       }
 
       function renderMatches() {
-        const list = STATE.matches.filter(matchesFilters);
+        const list = sortByStatus(STATE.matches.filter(matchesFilters));
         $("matches-count").textContent = `${list.length} shown`;
 
         if (!list.length) {
@@ -1460,15 +1696,19 @@
           const home = m.home || "Home";
           const away = m.away || "Away";
           const scoreText = m.score || (m.result && m.result !== "NS" ? m.result : "");
-          const boxesHtml = MATCH_BOX_MARKETS.map((mkt) => {
+          const { dateStr, timeStr } = formatKickoffWat(m.kickoff || m.date || "");
+
+          const boxesHtml = MARKETS_12.map((mkt, mIdx) => {
             const suppliedOdd = m.market_odds && m.market_odds[mkt.name] != null
               ? Number(m.market_odds[mkt.name]).toFixed(2)
               : mkt.fallbackOdd.toFixed(2);
+            const mktStatus = evaluateLegOutcome(mkt.name, m);
             return `
               <div class="market-box">
-                <span style="font-size:11px;font-weight:400;">${escapeHtml(mkt.short)}</span>
+                <span class="mono" style="font-size:9px;color:var(--gold);">#${mIdx + 1}</span>
+                <span style="font-size:10px;font-weight:400;">${escapeHtml(mkt.short)}</span>
                 <span class="market-box-odd mono">${escapeHtml(suppliedOdd)}</span>
-                <span class="result-pill ${status === "Live" ? "live" : ""}" style="font-size:9px;padding:2px 6px;">${escapeHtml(status)}</span>
+                <span class="result-pill ${badgeClass(mktStatus)}" style="font-size:9px;padding:1px 5px;">${escapeHtml(mktStatus)}</span>
               </div>
             `;
           }).join("");
@@ -1481,8 +1721,8 @@
                 <span class="vs-badge mono">${escapeHtml(scoreText || "VS")}</span>
               </div>
               <div class="match-meta">
-                <span>${escapeHtml(m.league || "League")} • ${escapeHtml(m.date || "")}</span>
-                <span class="result-pill ${status === "Live" ? "live" : ""}">${escapeHtml(status)}</span>
+                <span>${escapeHtml([m.country, m.league, dateStr, timeStr].filter(Boolean).join(" · "))}</span>
+                <span class="result-pill ${badgeClass(status)}">${escapeHtml(status)}</span>
               </div>
               <div class="match-grid">${boxesHtml}</div>
             </article>
@@ -1562,30 +1802,24 @@
           return;
         }
         if (!STATE.historyCards.length && !STATE.historyMatches.length) {
-          out.innerHTML = `<div class="empty-box">No recorded cards or matches found in Supabase for ${escapeHtml(STATE.selectedHistoryDate)}.</div>`;
+          out.innerHTML = `<div class="empty-box">No snapshot saved in Supabase for ${escapeHtml(STATE.selectedHistoryDate)}. Daily snapshots save when /api/cron runs on that date.</div>`;
           return;
         }
 
         const cardsHtml = STATE.historyCards.map((c, idx) => {
-          const legs = parseLegs(c.legs);
+          const legs = sortByStatus(parseLegs(c.legs, c.market || "Market"));
+          const summary = computeCardSummary(c, legs);
           return `
             <article class="special-card">
               <div class="special-head">
-                <h3 style="font-size:14px;font-weight:600;">${idx + 1}. ${escapeHtml(c.market || "Market")}</h3>
+                <h3 style="font-size:14px;font-weight:600;">#${idx + 1} · ${escapeHtml(c.market || "Market")}</h3>
                 <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
                   <span class="odds-pill mono">${escapeHtml(c.total_odds ?? "—")} odds</span>
-                  <span class="result-pill">${escapeHtml(c.result || "PENDING")}</span>
+                  <span class="progress-pill mono">${escapeHtml(summary.progressText)}</span>
+                  <span class="result-pill ${summary.cls}">${escapeHtml(summary.text)}</span>
                 </div>
               </div>
-              ${legs.length ? `<div class="acc-legs" style="padding:8px 0 0;">${legs.map((leg, i) => `
-                <div class="leg-row">
-                  <div class="leg-teams">${i + 1}. ${escapeHtml(leg.teams)}</div>
-                  <div class="leg-sub">
-                    <span>${escapeHtml(leg.league)}</span>
-                    <span class="leg-odd mono">@${escapeHtml(leg.odds)} · ${escapeHtml(leg.status)}</span>
-                  </div>
-                </div>
-              `).join("")}</div>` : ""}
+              ${renderLegRows(legs)}
             </article>
           `;
         }).join("");
@@ -1594,22 +1828,18 @@
       }
 
       function renderAll() {
-        renderMarketCards();
         renderRolloverSection();
         renderSpecialCards();
+        renderMarketCards();
         renderMatches();
         renderStandings();
       }
 
-      function copyCardSlip(cardId) {
-        const cardEl = document.querySelector(`[data-card-id="${cardId}"]`);
-        const text = cardEl ? cardEl.innerText.trim() : cardId;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).catch(() => {});
-        }
-        STATE.copiedIds.add(cardId);
-        renderMarketCards();
-        showToast("Accumulator slip copied");
+      function syncAlertsButton() {
+        const btn = $("push-toggle-btn");
+        btn.classList.toggle("active", STATE.alertsEnabled);
+        btn.setAttribute("aria-pressed", String(STATE.alertsEnabled));
+        btn.textContent = `Alerts: ${STATE.alertsEnabled ? "ON" : "OFF"}`;
       }
 
       function bindEvents() {
@@ -1671,9 +1901,34 @@
             renderMarketCards();
             return;
           }
-          const copyBtn = e.target.closest("[data-copy-card]");
+
+          const copyBtn = e.target.closest("[data-copy-slip]");
           if (copyBtn) {
-            copyCardSlip(copyBtn.dataset.copyCard);
+            const key = copyBtn.dataset.copySlip;
+            const slip = STATE.slipStore.get(key);
+            if (slip) {
+              const text = formatSlipText(slip.title, slip.oddsText, slip.targetText, slip.progressText, slip.legs);
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).catch(() => {});
+              }
+            }
+            STATE.copiedIds.add(key);
+            renderAll();
+            showToast("Accumulator slip copied");
+            return;
+          }
+
+          const imgBtn = e.target.closest("[data-img-slip]");
+          if (imgBtn) {
+            const slip = STATE.slipStore.get(imgBtn.dataset.imgSlip);
+            if (slip) shareSlipImage(slip);
+            return;
+          }
+
+          const waBtn = e.target.closest("[data-wa-slip]");
+          if (waBtn) {
+            const slip = STATE.slipStore.get(waBtn.dataset.waSlip);
+            if (slip) shareSlipWhatsApp(slip);
           }
         });
 
@@ -1682,10 +1937,15 @@
             try { await Notification.requestPermission(); } catch {}
           }
           STATE.alertsEnabled = !STATE.alertsEnabled;
-          const btn = $("push-toggle-btn");
-          btn.classList.toggle("active", STATE.alertsEnabled);
-          btn.setAttribute("aria-pressed", String(STATE.alertsEnabled));
-          btn.textContent = `Alerts: ${STATE.alertsEnabled ? "ON" : "OFF"}`;
+          localStorage.setItem("gz247_alerts", STATE.alertsEnabled ? "1" : "0");
+          syncAlertsButton();
+          if (STATE.alertsEnabled && "Notification" in window && Notification.permission === "granted") {
+            try {
+              new Notification("GOALZONE247 Alerts Enabled", {
+                body: "Browser notifications are active for daily Goalzone247 cards."
+              });
+            } catch {}
+          }
           showToast(STATE.alertsEnabled ? "Browser alerts enabled" : "Browser alerts turned off");
         });
 
@@ -1695,6 +1955,7 @@
         $("fab-bottom").addEventListener("click", () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" }));
       }
 
+      syncAlertsButton();
       bindEvents();
       renderHistoryTabs();
       loadPrimaryData();
