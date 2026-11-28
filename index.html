@@ -960,7 +960,7 @@
           <h2 class="section-title">#1 · 2.50 Rollover Card</h2>
           <span class="section-count mono">Swipe ← Card 1 · Card 2 →</span>
         </div>
-        <p class="sub-line">Pick Morning or Evening, then tap or swipe left/right between Card 1 and Card 2.</p>
+        <p class="sub-line">Morning (&lt; 14:00 WAT) and Evening (&ge; 14:00 WAT) sessions kept separate. Tap or swipe Card 1 / Card 2.</p>
         <div class="rollover-box" id="rollover-swipe-box">
           <div class="session-row" role="tablist" aria-label="2.50 Rollover session">
             <button type="button" class="session-btn active" data-rollover-session="Morning" aria-selected="true">Morning 2.50 Rollover</button>
@@ -979,7 +979,7 @@
           <h2 class="section-title">#2 · Early Morning &amp; Mix Accumulators</h2>
           <span class="section-count mono" id="special-cards-count">5 cards</span>
         </div>
-        <p class="sub-line">Early Morning, Morning, Midnight, and Mega Mix (12.00+ &amp; 30.00+) cards across goal markets.</p>
+        <p class="sub-line">Early Morning (00–06h), Morning (07–11h), and Midnight (22–03h WAT) cards use their own kickoff windows; Mega Mix covers all hours.</p>
         <div class="special-stack" id="special-cards"></div>
       </section>
 
@@ -995,7 +995,7 @@
           <h2 class="section-title">#3 · Individual Market Accumulators</h2>
           <span class="section-count mono" id="market-cards-count">12 markets</span>
         </div>
-        <p class="sub-line">Each market has its own accumulator card. Legs are ordered Live → Upcoming → Finished.</p>
+        <p class="sub-line">Each market has its own accumulator card. Legs are ordered Live → Upcoming → Finished by kickoff time.</p>
 
         <div class="line-divider">
           <span class="line-tag mono">LINE 1</span>
@@ -1021,7 +1021,7 @@
           <h2 class="section-title">All Fixtures &amp; Predictions</h2>
           <span class="section-count mono" id="matches-count">0 shown</span>
         </div>
-        <p class="sub-line">Sorted Live → Upcoming → Finished. Each fixture shows all 12 numbered markets and live market status.</p>
+        <p class="sub-line">Sorted Live → Upcoming → Finished by kickoff time. Each fixture shows all 12 numbered markets and market status.</p>
         <div class="matches-list" id="matches-list"></div>
       </section>
 
@@ -1213,11 +1213,21 @@
       }
 
       function extractStatusFromResult(item) {
-        if (item.status && item.status !== "Upcoming") return normalizeStatus(item.status);
-        const resStr = String(item.result || "").toUpperCase();
+        const rawSt = String(item.status || "").trim();
+        if (rawSt && rawSt.toUpperCase() !== "UPCOMING") {
+          return normalizeStatus(rawSt);
+        }
+        const resStr = String(item.result || "").trim().toUpperCase();
         if (/\b(1H|2H|HT|ET|LIVE|IN_PLAY)\b/.test(resStr)) return "Live";
         if (/\b(FT|AET|PEN|FINISHED)\b/.test(resStr)) return "Finished";
-        return normalizeStatus(item.status || "Upcoming");
+        if (/^\d+\s*[-:]\s*\d+$/.test(resStr)) return "Live";
+
+        const epochMs = formatKickoffWat(item.kickoff || item.date || "").epoch;
+        if (epochMs && !Number.isNaN(epochMs)) {
+          const diffMs = Date.now() - epochMs;
+          if (diffMs >= 135 * 60 * 1000) return "Finished";
+        }
+        return "Upcoming";
       }
 
       function formatLiveTimeInfo(item, status) {
@@ -1291,7 +1301,9 @@
           const country = resolveCountry(item.country, league);
 
           return {
-            id: item.fixture_id || `${idx}`,
+            id: item.fixture_id ?? `${idx}`,
+            fixture_id: item.fixture_id ?? null,
+            kickoff: rawKickoff,
             teams,
             home: item.home || "",
             away: item.away || "",
@@ -1360,7 +1372,7 @@
               }
             }
           }
-          const combined = interleaved.slice(0, Math.max(todayLegs.length, 6));
+          const combined = sortLegsStrict(interleaved.slice(0, Math.max(todayLegs.length, 6)));
           const totalOdds = combined.reduce((acc, l) => acc * (Number(l.odds) || 1), 1);
           return {
             ...c,
@@ -1532,20 +1544,25 @@
             ? `Live Cache (${minsLeft}m next)`
             : `Live Synced (30m timer)`;
 
-          if (!items.length) return;
-
           const liveByPair = new Map();
           const liveById = new Map();
           items.forEach((it) => {
-            if (it.fixture_id != null) liveById.set(it.fixture_id, it);
+            if (it.fixture_id != null) liveById.set(String(it.fixture_id), it);
             if (it.home && it.away) {
-              liveByPair.set(`${String(it.home).toLowerCase()} vs ${String(it.away).toLowerCase()}`, it);
+              liveByPair.set(`${String(it.home).toLowerCase().trim()} vs ${String(it.away).toLowerCase().trim()}`, it);
             }
           });
 
+          const findHit = (obj) => {
+            if (obj.fixture_id != null && liveById.has(String(obj.fixture_id))) {
+              return liveById.get(String(obj.fixture_id));
+            }
+            const pairKey = `${String(obj.home || "").toLowerCase().trim()} vs ${String(obj.away || "").toLowerCase().trim()}`;
+            return liveByPair.get(pairKey) || null;
+          };
+
           STATE.matches = sortMatchesStrict(STATE.matches.map((m) => {
-            const pairKey = `${String(m.home || "").toLowerCase()} vs ${String(m.away || "").toLowerCase()}`;
-            const hit = (m.fixture_id != null ? liveById.get(m.fixture_id) : null) || liveByPair.get(pairKey);
+            const hit = findHit(m);
             return hit
               ? {
                   ...m,
@@ -1555,7 +1572,7 @@
                   score: hit.score,
                   home_goals: hit.home_goals,
                   away_goals: hit.away_goals,
-                  result: hit.score
+                  result: hit.result || hit.score
                 }
               : m;
           }));
@@ -1564,8 +1581,7 @@
             const legs = parseLegs(card.legs, card.market);
             let changed = false;
             const patched = legs.map((leg) => {
-              const pairKey = `${String(leg.home || "").toLowerCase()} vs ${String(leg.away || "").toLowerCase()}`;
-              const hit = liveByPair.get(pairKey);
+              const hit = findHit(leg);
               if (!hit) return leg;
               changed = true;
               return {
@@ -1578,7 +1594,7 @@
                 status: hit.status
               };
             });
-            return changed ? { ...card, legs: patched } : card;
+            return changed ? { ...card, legs: sortLegsStrict(patched) } : card;
           });
 
           renderAll();
@@ -1696,8 +1712,9 @@
       }
 
       function renderLegRows(legs) {
-        if (!legs.length) return "";
-        return `<div class="acc-legs">${legs.map((leg, i) => {
+        const orderedLegs = sortLegsStrict(legs);
+        if (!orderedLegs.length) return "";
+        return `<div class="acc-legs">${orderedLegs.map((leg, i) => {
           const metaParts = [leg.country, leg.league, leg.dateStr, leg.timeStr].filter(Boolean).join(" · ");
           const scoreBadge = leg.score
             ? `<span class="score-pill mono">${escapeHtml(leg.score)}${leg.liveClock ? ` · ${escapeHtml(leg.liveClock)}` : ""}</span>`
@@ -1718,7 +1735,7 @@
       }
 
       function registerSlip(slipKey, title, oddsText, targetText, statusText, progressText, legs) {
-        STATE.slipStore.set(slipKey, { title, oddsText, targetText, statusText, progressText, legs });
+        STATE.slipStore.set(slipKey, { title, oddsText, targetText, statusText, progressText, legs: sortLegsStrict(legs) });
       }
 
       function slipButtonsHtml(slipKey, copied) {
