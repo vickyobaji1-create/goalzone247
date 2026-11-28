@@ -1,4 +1,4 @@
-# Goalzone247 Backend v6.4 - Vercel + Supabase + requests
+# Goalzone247 Backend v6.5 - Vercel + Supabase + requests
 # Daily fixtures, accumulator cards, and standings are stored in Supabase.
 # Historical reads never call API-Football. Estimated fallback prices are
 # explicitly labelled and must never be represented as bookmaker odds.
@@ -42,13 +42,21 @@ GOAL_MARKETS = [
     "First-Half Over 0.5", "Home Score Over 0.5", "Away Score Over 0.5",
 ]
 
+# Tuned to realistic bookmaker prices (especially delicate markets like Home Score Over 0.5
+# and high-variance Away / BTTS combo markets)
 FALLBACK_ODDS = {
-    "Over 1.5": 1.32, "Over 2.5": 1.95, "BTTS": 1.85,
-    "Home Over 1.5": 1.75, "Away Over 1.5": 2.10,
-    "1X + BTTS": 2.30, "X2 + BTTS": 2.40,
-    "Home Win + Over 1.5": 2.05, "Away Win + Over 1.5": 2.60,
-    "First-Half Over 0.5": 1.45, "Home Score Over 0.5": 1.25,
-    "Away Score Over 0.5": 1.40,
+    "Over 1.5": 1.24,
+    "Over 2.5": 1.72,
+    "BTTS": 1.68,
+    "Home Over 1.5": 1.55,
+    "Away Over 1.5": 1.72,
+    "1X + BTTS": 1.85,
+    "X2 + BTTS": 1.95,
+    "Home Win + Over 1.5": 1.78,
+    "Away Win + Over 1.5": 2.10,
+    "First-Half Over 0.5": 1.32,
+    "Home Score Over 0.5": 1.18,
+    "Away Score Over 0.5": 1.28,
 }
 
 
@@ -255,18 +263,26 @@ def _fixture_to_match(fx, date_str):
     fixture = fx.get("fixture") or {}
     teams = fx.get("teams") or {}
     league = fx.get("league") or {}
+    goals = fx.get("goals") or {}
     status = (fixture.get("status") or {}).get("short", "")
     home = teams.get("home") or {}
     away = teams.get("away") or {}
+    hg = goals.get("home")
+    ag = goals.get("away")
+    score_str = f"{hg} - {ag}" if hg is not None and ag is not None else None
     return {
         "date": date_str,
         "market": "fixture",
         "fixture_id": fixture.get("id"),
         "home": home.get("name"),
         "away": away.get("name"),
+        "country": league.get("country") or "",
         "league": league.get("name"),
         "league_id": league.get("id"),
         "kickoff": fixture.get("date"),
+        "home_goals": hg,
+        "away_goals": ag,
+        "score": score_str,
         "odds": None,
         "result": status or "NS",
         "status": _normalise_status(status),
@@ -280,36 +296,54 @@ def _total_odds(items):
     return price
 
 
-def build_card(market, candidates, used, min_legs=5, max_legs=8, target_odds=12.0, target_label="12.00+"):
+def build_card(market, candidates, used, min_legs=5, max_legs=10, target_odds=12.0, target_label="12.00+"):
     candidates = sort_status(candidates)
     pool = (
         [c for c in candidates if c.get("fixture_id") not in used]
         + [c for c in candidates if c.get("fixture_id") in used]
     )
-    legs, seen = [], set()
+    legs, seen_pairs = [], set()
 
     for candidate in pool:
         fid = candidate.get("fixture_id")
-        if fid is None or fid in seen:
+        mkt = candidate.get("market") or market
+        pair_key = (fid, mkt)
+        if fid is None or pair_key in seen_pairs:
             continue
         legs.append(dict(candidate))
-        seen.add(fid)
-        if len(legs) == min_legs:
+        seen_pairs.add(pair_key)
+        if len(legs) >= min_legs and _total_odds(legs) >= target_odds:
             break
 
-    while len(legs) < max_legs and legs and _total_odds(legs) < target_odds:
+    # Add legs up to max_legs until target_odds is reached
+    while len(legs) < max_legs and _total_odds(legs) < target_odds:
         extra = next(
             (dict(c) for c in sorted(pool, key=lambda x: float(x["odds"]), reverse=True)
-             if c.get("fixture_id") is not None and c.get("fixture_id") not in seen),
+             if c.get("fixture_id") is not None
+             and (c.get("fixture_id"), c.get("market") or market) not in seen_pairs),
             None,
         )
         if extra is None:
             break
         legs.append(extra)
-        seen.add(extra["fixture_id"])
+        seen_pairs.add((extra["fixture_id"], extra.get("market") or market))
+
+    # If still under target_odds and we have legs, gently extend up to 14 legs when needed to hit target
+    hard_cap = max(max_legs, 14)
+    while len(legs) < hard_cap and legs and _total_odds(legs) < target_odds:
+        extra = next(
+            (dict(c) for c in sorted(pool, key=lambda x: float(x["odds"]), reverse=True)
+             if c.get("fixture_id") is not None
+             and (c.get("fixture_id"), c.get("market") or market) not in seen_pairs),
+            None,
+        )
+        if extra is None:
+            break
+        legs.append(extra)
+        seen_pairs.add((extra["fixture_id"], extra.get("market") or market))
 
     legs = sort_status(legs)
-    used.update(x["fixture_id"] for x in legs)
+    used.update(x["fixture_id"] for x in legs if x.get("fixture_id") is not None)
     combined = _total_odds(legs) if legs else 0.0
     estimated = any(x.get("fallback_odds") for x in legs)
     return {
@@ -346,8 +380,12 @@ def _candidate_for_match(match, market):
         "fixture_id": match["fixture_id"],
         "home": match.get("home"),
         "away": match.get("away"),
+        "country": match.get("country") or "",
         "league": match.get("league"),
         "kickoff": match.get("kickoff"),
+        "home_goals": match.get("home_goals"),
+        "away_goals": match.get("away_goals"),
+        "score": match.get("score"),
         "status": match.get("status", "Upcoming"),
         "odds": price,
         "market": market,
@@ -391,20 +429,24 @@ def build_extra_cards(matches, used):
         lambda m: _kickoff_hour_wat(m) >= 14,
     ) or morning_250_pool
 
-    extra_cards.append(build_card("2.50 Rollover - Morning Card 1", morning_250_pool, used, 2, 4, 2.50, "2.50+"))
-    extra_cards.append(build_card("2.50 Rollover - Morning Card 2", morning_250_pool, used, 2, 4, 2.50, "2.50+"))
-    extra_cards.append(build_card("2.50 Rollover - Evening Card 1", evening_250_pool, used, 2, 4, 2.50, "2.50+"))
-    extra_cards.append(build_card("2.50 Rollover - Evening Card 2", evening_250_pool, used, 2, 4, 2.50, "2.50+"))
+    extra_cards.append(build_card("2.50 Rollover - Morning Card 1", morning_250_pool, used, 2, 5, 2.50, "2.50+"))
+    extra_cards.append(build_card("2.50 Rollover - Morning Card 2", morning_250_pool, used, 2, 5, 2.50, "2.50+"))
+    extra_cards.append(build_card("2.50 Rollover - Evening Card 1", evening_250_pool, used, 2, 5, 2.50, "2.50+"))
+    extra_cards.append(build_card("2.50 Rollover - Evening Card 2", evening_250_pool, used, 2, 5, 2.50, "2.50+"))
 
     early_morning_pool = _collect_candidates(matches, GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) < 12) or _collect_candidates(matches, GOAL_MARKETS)
     morning_pool = _collect_candidates(matches, GOAL_MARKETS, lambda m: 6 <= _kickoff_hour_wat(m) < 15) or _collect_candidates(matches, GOAL_MARKETS)
     midnight_pool = _collect_candidates(matches, GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) >= 21 or _kickoff_hour_wat(m) < 4) or _collect_candidates(matches, GOAL_MARKETS)
-    mega_mix_pool = _collect_candidates(matches, ("Over 2.5", "Over 1.5", "Home Over 1.5", "Away Over 1.5", "Home Win + Over 1.5", "Away Win + Over 1.5"))
+    mega_mix_pool = _collect_candidates(
+        matches,
+        ("Over 2.5", "Over 1.5", "Home Over 1.5", "Away Over 1.5", "Home Win + Over 1.5", "Away Win + Over 1.5"),
+    )
 
     extra_cards.append(build_card("Early Morning Accumulator", early_morning_pool, used, 5, 8, 12.0, "12.00+"))
     extra_cards.append(build_card("Morning Accumulator", morning_pool, used, 5, 8, 12.0, "12.00+"))
     extra_cards.append(build_card("Midnight Accumulator", midnight_pool, used, 5, 8, 12.0, "12.00+"))
-    extra_cards.append(build_card("Mega Mix Accumulator", mega_mix_pool, used, 6, 12, 12.0, "12.00+"))
+    extra_cards.append(build_card("Mega Mix Accumulator (12.00+)", mega_mix_pool, used, 6, 12, 12.0, "12.00+"))
+    extra_cards.append(build_card("Mega Mix Accumulator (30.00+)", mega_mix_pool, used, 8, 14, 30.0, "30.00+"))
 
     return extra_cards
 
