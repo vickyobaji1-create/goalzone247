@@ -1,7 +1,6 @@
-# Goalzone247 Backend v6.7 - Vercel + Supabase + requests
+# Goalzone247 Backend v7.0 - Vercel + Supabase + requests
 # Daily fixtures, accumulator cards, and standings are stored in Supabase.
-# Historical reads never call API-Football. Estimated fallback prices are
-# explicitly labelled and must never be represented as bookmaker odds.
+# Live scores use a strict 30-minute Supabase cooldown so visitor refreshes never burn API quota.
 
 import os
 import json
@@ -24,6 +23,7 @@ API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY", "").strip()
 HOST = "v3.football.api-sports.io"
 KEEP_DAYS = 10
 MAX_STANDINGS_LEAGUES = 12
+LIVE_COOLDOWN_SECONDS = 1800  # 30 minutes strict cooldown
 REQUEST_TIMEOUT = 15
 
 TABLES = ("saved_markets", "saved_cards", "saved_standings")
@@ -67,9 +67,74 @@ FALLBACK_ODDS = {
     "Away Score Over 0.5": 1.28,
 }
 
+# Broad global league weightings (Europe, Americas, Asia/Oceania, Continental Cups)
+PRIORITY_LEAGUE_IDS = {
+    # Top European & Continental
+    39: 100,   # Premier League (England)
+    40: 82,    # Championship (England)
+    41: 74,    # League One (England)
+    45: 78,    # FA Cup (England)
+    48: 75,    # EFL Cup (England)
+    140: 98,   # La Liga (Spain)
+    141: 76,   # Segunda División (Spain)
+    143: 75,   # Copa del Rey (Spain)
+    78: 98,    # Bundesliga (Germany)
+    79: 78,    # 2. Bundesliga (Germany)
+    81: 75,    # DFB Pokal (Germany)
+    135: 98,   # Serie A (Italy)
+    136: 75,   # Serie B (Italy)
+    137: 74,   # Coppa Italia (Italy)
+    61: 95,    # Ligue 1 (France)
+    62: 74,    # Ligue 2 (France)
+    2: 97,     # UEFA Champions League
+    3: 90,     # UEFA Europa League
+    848: 82,   # UEFA Conference League
+    # Strong European secondary / midweek-active leagues
+    88: 90,    # Eredivisie (Netherlands)
+    89: 75,    # Eerste Divisie (Netherlands)
+    94: 88,    # Primeira Liga (Portugal)
+    144: 84,   # Jupiler Pro League (Belgium)
+    179: 80,   # Premiership (Scotland)
+    203: 84,   # Süper Lig (Turkey)
+    197: 76,   # Super League 1 (Greece)
+    218: 78,   # Liga I (Romania)
+    106: 76,   # Ekstraklasa (Poland)
+    207: 78,   # Super League (Switzerland)
+    210: 76,   # HNL (Croatia)
+    119: 78,   # Superliga (Denmark)
+    113: 78,   # Allsvenskan (Sweden)
+    103: 78,   # Eliteserien (Norway)
+    # Americas (great for evening & midnight WAT windows + midweek fixtures)
+    71: 90,    # Serie A (Brazil)
+    72: 75,    # Serie B (Brazil)
+    128: 86,   # Liga Profesional (Argentina)
+    253: 84,   # Major League Soccer (USA)
+    262: 82,   # Liga MX (Mexico)
+    13: 88,    # CONMEBOL Libertadores
+    11: 80,    # CONMEBOL Sudamericana
+    # Asia & Oceania (strong morning & early-morning WAT coverage)
+    98: 84,    # J1 League (Japan)
+    99: 74,    # J2 League (Japan)
+    292: 80,   # K League 1 (Korea Republic)
+    188: 78,   # A-League (Australia)
+    169: 74,   # Super League (China)
+    307: 82,   # Pro League (Saudi Arabia)
+}
+
+HIGH_SCORE_KEYWORDS = (
+    "premier", "bundesliga", "eredivisie", "la liga", "serie a", "ligue 1",
+    "championship", "primeira", "super lig", "pro league", "j1", "j2", "k league",
+    "a-league", "mls", "liga mx", "allsvenskan", "eliteserien", "superliga",
+    "champions league", "europa", "libertadores", "sudamericana", "cup",
+)
+
 
 def local_today():
     return datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
+
+
+def local_tomorrow():
+    return (datetime.now(LOCAL_TZ) + timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def valid_date(value):
@@ -154,6 +219,12 @@ def sb_post(table, data):
         return {"ok": True, "saved": 0}
     return _sb_request(
         "POST", table, data=data, service=True, prefer="return=representation"
+    )
+
+
+def sb_patch(table, query, data):
+    return _sb_request(
+        "PATCH", table, query=query, data=data, service=True, prefer="return=minimal"
     )
 
 
@@ -276,7 +347,6 @@ def _kickoff_epoch(raw):
 
 
 def sort_status(legs):
-    # Strictly Live (0) -> Upcoming (1) -> Finished (2), then chronological kickoff
     order = {"Live": 0, "Upcoming": 1, "Finished": 2}
     return sorted(
         legs,
@@ -285,6 +355,34 @@ def sort_status(legs):
             _kickoff_epoch(x.get("kickoff") or x.get("date")),
         ),
     )
+
+
+def _league_performance_score(league_id, league_name, fixture_count=1):
+    score = float(PRIORITY_LEAGUE_IDS.get(league_id, 45))
+    name_l = str(league_name or "").lower()
+    if any(kw in name_l for kw in HIGH_SCORE_KEYWORDS):
+        score += 18.0
+    score += min(25.0, max(0, fixture_count - 1) * 3.0)
+    return score
+
+
+def _rank_matches_by_quality(matches):
+    counts = {}
+    for m in matches:
+        lid = m.get("league_id")
+        counts[lid] = counts.get(lid, 0) + 1
+
+    def quality_key(m):
+        lid = m.get("league_id")
+        lg = m.get("league") or ""
+        q_score = _league_performance_score(lid, lg, counts.get(lid, 1))
+        hs = team_stats(m.get("home_last10", []))
+        aws = team_stats(m.get("away_last10", []))
+        if hs and aws:
+            q_score += ((hs["avg_goals"] + aws["avg_goals"]) / 2.0) * 10.0
+        return (-q_score, _kickoff_epoch(m.get("kickoff") or m.get("date")))
+
+    return sorted(matches, key=quality_key)
 
 
 def _fixture_to_match(fx, date_str):
@@ -300,6 +398,12 @@ def _fixture_to_match(fx, date_str):
     hg = goals.get("home")
     ag = goals.get("away")
     score_str = f"{hg} - {ag}" if hg is not None and ag is not None else None
+    lid = league.get("id")
+    lname = league.get("name")
+    norm_status = _normalise_status(status_short)
+    result_payload = score_str or status_short or "NS"
+    if norm_status == "Live" and elapsed is not None:
+        result_payload = f"{score_str or '0 - 0'} ({status_short} {elapsed}')"
     return {
         "date": date_str,
         "market": "fixture",
@@ -307,8 +411,9 @@ def _fixture_to_match(fx, date_str):
         "home": home.get("name"),
         "away": away.get("name"),
         "country": league.get("country") or "",
-        "league": league.get("name"),
-        "league_id": league.get("id"),
+        "league": lname,
+        "league_id": lid,
+        "league_score": _league_performance_score(lid, lname),
         "kickoff": fixture.get("date"),
         "elapsed": elapsed,
         "status_short": status_short or "NS",
@@ -316,8 +421,8 @@ def _fixture_to_match(fx, date_str):
         "away_goals": ag,
         "score": score_str,
         "odds": None,
-        "result": score_str or status_short or "NS",
-        "status": _normalise_status(status_short),
+        "result": result_payload,
+        "status": norm_status,
     }
 
 
@@ -330,6 +435,7 @@ def _total_odds(items):
 
 def build_card(market, candidates, used, min_legs=5, max_legs=8, target_odds=12.0, target_label="12.00+"):
     candidates = sort_status(candidates)
+    # Prefer unused fixtures first, then allow reuse of strong candidates if needed so cards stay full
     pool = (
         [c for c in candidates if c.get("fixture_id") not in used]
         + [c for c in candidates if c.get("fixture_id") in used]
@@ -425,13 +531,17 @@ def _kickoff_hour_wat(match):
         return 12
 
 
-def _collect_mixed_candidates(matches, markets, filter_fn=None):
-    """Interleave markets across different matches so mix cards combine varied goal markets."""
-    subset = [m for m in matches if filter_fn(m)] if filter_fn else list(matches)
+def _collect_window_candidates(matches, markets, window_fn):
+    """Prioritize matches inside the requested WAT time window, then pad with top-ranked global matches."""
+    ranked = _rank_matches_by_quality(matches)
+    in_window = [m for m in ranked if window_fn(m)]
+    outside_window = [m for m in ranked if not window_fn(m)]
+    ordered = in_window + outside_window
+
     per_market = []
     for mkt in markets:
         bucket = []
-        for match in subset:
+        for match in ordered:
             cand = _candidate_for_match(match, mkt)
             if cand:
                 bucket.append(cand)
@@ -450,34 +560,30 @@ def _collect_mixed_candidates(matches, markets, filter_fn=None):
 def build_extra_cards(matches, used):
     extra_cards = []
 
-    morning_250_pool = _collect_mixed_candidates(
-        matches, ROLLOVER_250_MARKETS,
-        lambda m: _kickoff_hour_wat(m) < 14,
-    ) or _collect_mixed_candidates(matches, ROLLOVER_250_MARKETS)
-
-    evening_250_pool = _collect_mixed_candidates(
-        matches, ROLLOVER_250_MARKETS,
-        lambda m: _kickoff_hour_wat(m) >= 14,
-    ) or morning_250_pool
+    morning_250_pool = _collect_window_candidates(
+        matches, ROLLOVER_250_MARKETS, lambda m: _kickoff_hour_wat(m) < 14
+    )
+    evening_250_pool = _collect_window_candidates(
+        matches, ROLLOVER_250_MARKETS, lambda m: _kickoff_hour_wat(m) >= 14
+    )
 
     extra_cards.append(build_card("2.50 Rollover - Morning Card 1", morning_250_pool, used, 2, 4, 2.50, "2.50+"))
     extra_cards.append(build_card("2.50 Rollover - Morning Card 2", morning_250_pool, used, 2, 4, 2.50, "2.50+"))
     extra_cards.append(build_card("2.50 Rollover - Evening Card 1", evening_250_pool, used, 2, 4, 2.50, "2.50+"))
     extra_cards.append(build_card("2.50 Rollover - Evening Card 2", evening_250_pool, used, 2, 4, 2.50, "2.50+"))
 
-    early_morning_pool = (
-        _collect_mixed_candidates(matches, MIX_GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) < 12)
-        or _collect_mixed_candidates(matches, MIX_GOAL_MARKETS)
+    early_morning_pool = _collect_window_candidates(
+        matches, MIX_GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) < 12
     )
-    morning_pool = (
-        _collect_mixed_candidates(matches, MIX_GOAL_MARKETS, lambda m: 6 <= _kickoff_hour_wat(m) < 15)
-        or _collect_mixed_candidates(matches, MIX_GOAL_MARKETS)
+    morning_pool = _collect_window_candidates(
+        matches, MIX_GOAL_MARKETS, lambda m: 6 <= _kickoff_hour_wat(m) < 15
     )
-    midnight_pool = (
-        _collect_mixed_candidates(matches, MIX_GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) >= 21 or _kickoff_hour_wat(m) < 4)
-        or _collect_mixed_candidates(matches, MIX_GOAL_MARKETS)
+    midnight_pool = _collect_window_candidates(
+        matches, MIX_GOAL_MARKETS, lambda m: _kickoff_hour_wat(m) >= 21 or _kickoff_hour_wat(m) < 4
     )
-    mega_mix_pool = _collect_mixed_candidates(matches, MIX_GOAL_MARKETS)
+    mega_mix_pool = _collect_window_candidates(
+        matches, MIX_GOAL_MARKETS, lambda m: True
+    )
 
     extra_cards.append(build_card("Early Morning Accumulator", early_morning_pool, used, 5, 7, 12.0, "12.00+"))
     extra_cards.append(build_card("Morning Accumulator", morning_pool, used, 5, 7, 12.0, "12.00+"))
@@ -489,15 +595,16 @@ def build_extra_cards(matches, used):
 
 
 def build_daily_cards(matches):
+    ranked_matches = _rank_matches_by_quality(matches)
     used, cards = set(), []
     for market in MARKETS_12:
         candidates = []
-        for match in matches:
+        for match in ranked_matches:
             cand = _candidate_for_match(match, market)
             if cand:
                 candidates.append(cand)
         cards.append(build_card(market, candidates, used))
-    cards.extend(build_extra_cards(matches, used))
+    cards.extend(build_extra_cards(ranked_matches, used))
     return cards
 
 
@@ -523,64 +630,31 @@ def _restore_date(table, date_str, rows):
     return {"ok": True}
 
 
-def run_daily_build(date_str=None):
-    today = date_str or local_today()
-    if not valid_date(today):
-        return {"ok": False, "error": "Invalid date; expected YYYY-MM-DD"}
-
-    fixture_data = af_get(f"/fixtures?date={urllib.parse.quote(today, safe='')}")
-    if _has_error(fixture_data):
-        return {"ok": False, "error": fixture_data["error"], "records_preserved": True}
-    fixtures = fixture_data.get("response")
-    if not isinstance(fixtures, list) or not fixtures:
-        return {
-            "ok": False,
-            "error": "API-Football returned no fixtures; existing records were preserved",
-            "records_preserved": True,
-            "fixtures_fetched": 0,
-        }
-
-    matches = []
-    for fixture in fixtures:
-        try:
-            match = _fixture_to_match(fixture, today)
-            if match["fixture_id"] and match["home"] and match["away"] and match["kickoff"]:
-                matches.append(match)
-        except Exception:
-            continue
-    if not matches:
-        return {
-            "ok": False,
-            "error": "No valid fixtures could be parsed; existing records were preserved",
-            "records_preserved": True,
-            "fixtures_fetched": len(fixtures),
-        }
-
-    match_rows = [{
-        "date": today, "market": "fixture", "home": m["home"], "away": m["away"],
-        "league": m["league"], "kickoff": m["kickoff"], "odds": None,
-        "result": m["result"],
-    } for m in matches]
-
-    cards = build_daily_cards(matches)
-    cards_to_save = _card_rows(today, cards)
-
-    backups = {}
-    for table in TABLES:
-        old = sb_get(table, f"date=eq.{today}", service=True)
-        if _has_error(old):
-            return {
-                "ok": False, "error": f"Could not back up {table}: {old['error']}",
-                "records_preserved": True,
-            }
-        backups[table] = old
-
-    standing_rows, standing_errors, league_ids = [], [], {}
+def _fetch_standings_for_matches(matches, date_str, already_fetched_leagues=None):
+    standing_rows, standing_errors, league_meta = [], [], {}
+    skip_ids = set(already_fetched_leagues or ())
     for match in matches:
-        if match.get("league_id") is not None:
-            league_ids[match["league_id"]] = match.get("league")
-    season = int(today[:4])
-    for league_id, league_name in list(league_ids.items())[:MAX_STANDINGS_LEAGUES]:
+        lid = match.get("league_id")
+        if lid is not None and lid not in skip_ids:
+            existing = league_meta.get(lid)
+            cnt = (existing["count"] + 1) if existing else 1
+            lname = match.get("league")
+            league_meta[lid] = {
+                "name": lname,
+                "count": cnt,
+                "score": _league_performance_score(lid, lname, cnt),
+            }
+
+    ranked_leagues = sorted(
+        league_meta.items(),
+        key=lambda kv: kv[1]["score"],
+        reverse=True,
+    )[:MAX_STANDINGS_LEAGUES]
+
+    season = int(date_str[:4])
+    fetched_ids = set()
+    for league_id, info in ranked_leagues:
+        league_name = info["name"]
         response = af_get(f"/standings?league={league_id}&season={season}")
         if _has_error(response):
             standing_errors.append(response["error"])
@@ -589,12 +663,72 @@ def run_daily_build(date_str=None):
             groups = response.get("response", [])[0]["league"]["standings"][0][:5]
             for row in groups:
                 standing_rows.append({
-                    "date": today, "league": league_name, "league_id": league_id,
-                    "position": row["rank"], "team": row["team"]["name"],
-                    "played": row["all"]["played"], "points": row["points"],
+                    "date": date_str,
+                    "league": league_name,
+                    "league_id": league_id,
+                    "position": row["rank"],
+                    "team": row["team"]["name"],
+                    "played": row["all"]["played"],
+                    "points": row["points"],
                 })
+            fetched_ids.add(league_id)
         except (IndexError, KeyError, TypeError):
             continue
+
+    return standing_rows, standing_errors, fetched_ids
+
+
+def _build_single_day(target_date, skip_standings_leagues=None):
+    fixture_data = af_get(f"/fixtures?date={urllib.parse.quote(target_date, safe='')}")
+    if _has_error(fixture_data):
+        return {"ok": False, "error": fixture_data["error"], "records_preserved": True}
+    fixtures = fixture_data.get("response")
+    if not isinstance(fixtures, list) or not fixtures:
+        return {
+            "ok": False,
+            "error": f"API-Football returned no fixtures for {target_date}; existing records preserved",
+            "records_preserved": True,
+            "fixtures_fetched": 0,
+        }
+
+    matches = []
+    for fixture in fixtures:
+        try:
+            match = _fixture_to_match(fixture, target_date)
+            if match["fixture_id"] and match["home"] and match["away"] and match["kickoff"]:
+                matches.append(match)
+        except Exception:
+            continue
+    if not matches:
+        return {
+            "ok": False,
+            "error": f"No valid fixtures could be parsed for {target_date}",
+            "records_preserved": True,
+            "fixtures_fetched": len(fixtures),
+        }
+
+    ranked_matches = _rank_matches_by_quality(matches)
+    match_rows = [{
+        "date": target_date, "market": "fixture", "home": m["home"], "away": m["away"],
+        "league": m["league"], "kickoff": m["kickoff"], "odds": None,
+        "result": m["result"],
+    } for m in ranked_matches]
+
+    cards = build_daily_cards(ranked_matches)
+    cards_to_save = _card_rows(target_date, cards)
+    standing_rows, standing_errors, fetched_league_ids = _fetch_standings_for_matches(
+        ranked_matches, target_date, skip_standings_leagues
+    )
+
+    backups = {}
+    for table in TABLES:
+        old = sb_get(table, f"date=eq.{target_date}", service=True)
+        if _has_error(old):
+            return {
+                "ok": False, "error": f"Could not back up {table}: {old['error']}",
+                "records_preserved": True,
+            }
+        backups[table] = old
 
     new_rows = {
         "saved_markets": match_rows,
@@ -603,10 +737,10 @@ def run_daily_build(date_str=None):
     }
 
     for table in TABLES:
-        deleted = sb_delete_date(table, today)
+        deleted = sb_delete_date(table, target_date)
         if _has_error(deleted):
             for restore_table in TABLES:
-                _restore_date(restore_table, today, backups[restore_table])
+                _restore_date(restore_table, target_date, backups[restore_table])
             return {"ok": False, "error": f"Could not clear old {table} rows", "detail": deleted,
                     "rollback_attempted": True}
 
@@ -617,12 +751,49 @@ def run_daily_build(date_str=None):
             save_errors[table] = saved["error"]
     if save_errors:
         rollback = {
-            table: _restore_date(table, today, backups[table])
+            table: _restore_date(table, target_date, backups[table])
             for table in TABLES
         }
         return {
-            "ok": False, "error": "Supabase save failed; previous rows were restored where possible",
+            "ok": False, "error": "Supabase save failed; previous rows were restored",
             "save_errors": save_errors, "rollback": rollback,
+        }
+
+    return {
+        "ok": True,
+        "date": target_date,
+        "fixtures_fetched": len(fixtures),
+        "fixtures_saved": len(match_rows),
+        "cards_built": len(cards),
+        "cards_saved": len(cards_to_save),
+        "cards": cards,
+        "ranked_matches": ranked_matches,
+        "standings_saved": len(standing_rows),
+        "standings_errors": standing_errors,
+        "fetched_league_ids": list(fetched_league_ids),
+    }
+
+
+def run_daily_build(date_str=None, include_tomorrow=True):
+    today = date_str or local_today()
+    if not valid_date(today):
+        return {"ok": False, "error": "Invalid date; expected YYYY-MM-DD"}
+
+    today_build = _build_single_day(today)
+    if not today_build.get("ok"):
+        return today_build
+
+    tomorrow_summary = None
+    if not date_str and include_tomorrow:
+        tmr = local_tomorrow()
+        tmr_build = _build_single_day(tmr, skip_standings_leagues=today_build.get("fetched_league_ids"))
+        tomorrow_summary = {
+            "date": tmr,
+            "ok": bool(tmr_build.get("ok")),
+            "fixtures_saved": tmr_build.get("fixtures_saved", 0),
+            "cards_saved": tmr_build.get("cards_saved", 0),
+            "standings_saved": tmr_build.get("standings_saved", 0),
+            "error": tmr_build.get("error"),
         }
 
     cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
@@ -633,17 +804,16 @@ def run_daily_build(date_str=None):
         "ok": True,
         "date": today,
         "fetch_time": "00:00 Africa/Lagos (Vercel cron at 23:00 UTC)",
-        "fixtures_fetched": len(fixtures),
-        "fixtures_saved": len(match_rows),
-        "cards_built": len(cards),
-        "cards_saved": len(cards_to_save),
-        "cards": cards,
-        "fallback_odds_are_estimates": True,
-        "standings_saved": len(standing_rows),
-        "standings_errors": standing_errors,
+        "fixtures_fetched": today_build["fixtures_fetched"],
+        "fixtures_saved": today_build["fixtures_saved"],
+        "cards_built": today_build["cards_built"],
+        "cards_saved": today_build["cards_saved"],
+        "cards": today_build["cards"],
+        "tomorrow": tomorrow_summary,
+        "standings_saved": today_build["standings_saved"],
+        "standings_errors": today_build["standings_errors"],
         "kept_days": KEEP_DAYS,
         "deleted_before": cutoff,
-        "cleanup": cleanup,
         "cleanup_errors": cleanup_errors,
     }
 
@@ -682,6 +852,127 @@ def win_lose(market, hg, ag, fh_h=None, fh_a=None):
     return "PENDING"
 
 
+def _sync_live_scores_with_cooldown(date_str):
+    """Fetch live scores at most once every 30 minutes and persist to Supabase."""
+    now_ts = time.time()
+    cache_rows = sb_get("saved_markets", f"date=eq.{date_str}&market=eq.live_cache&limit=1", service=True)
+    cached_row = cache_rows[0] if isinstance(cache_rows, list) and cache_rows else None
+
+    if cached_row and cached_row.get("result"):
+        try:
+            payload = json.loads(cached_row["result"])
+            last_ts = float(payload.get("ts", 0))
+            age = now_ts - last_ts
+            if 0 <= age < LIVE_COOLDOWN_SECONDS:
+                return {
+                    "date": date_str,
+                    "cached": True,
+                    "next_update_in_sec": int(LIVE_COOLDOWN_SECONDS - age),
+                    "live": len(payload.get("items", [])),
+                    "items": payload.get("items", []),
+                    "source": "supabase cache (30m cooldown - 0 API calls)",
+                }
+        except Exception:
+            pass
+
+    data = af_get("/fixtures?live=all")
+    if _has_error(data):
+        return {
+            "date": date_str,
+            "cached": True,
+            "live": 0,
+            "items": [],
+            "error": data["error"],
+            "source": "api-football error - using existing records",
+        }
+
+    raw_live = data.get("response", []) if isinstance(data, dict) else []
+    compact_items = []
+    by_fid = {}
+    by_pair = {}
+
+    for fx in raw_live:
+        fixture = fx.get("fixture") or {}
+        teams = fx.get("teams") or {}
+        goals = fx.get("goals") or {}
+        status_obj = fixture.get("status") or {}
+        fid = fixture.get("id")
+        home = (teams.get("home") or {}).get("name") or ""
+        away = (teams.get("away") or {}).get("name") or ""
+        hg = goals.get("home")
+        ag = goals.get("away")
+        short_st = status_obj.get("short") or "LIVE"
+        elapsed = status_obj.get("elapsed")
+        score_str = f"{hg} - {ag}" if hg is not None and ag is not None else short_st
+        entry = {
+            "fixture_id": fid,
+            "home": home,
+            "away": away,
+            "home_goals": hg,
+            "away_goals": ag,
+            "score": score_str,
+            "status_short": short_st,
+            "elapsed": elapsed,
+            "status": _normalise_status(short_st),
+        }
+        compact_items.append(entry)
+        if fid is not None:
+            by_fid[fid] = entry
+        if home and away:
+            by_pair[f"{home.lower()} vs {away.lower()}"] = entry
+
+    cards_rows = sb_get("saved_cards", f"date=eq.{date_str}", service=True)
+    if isinstance(cards_rows, list) and compact_items:
+        for row in cards_rows:
+            row_id = row.get("id")
+            if not row_id:
+                continue
+            try:
+                legs = json.loads(row.get("legs") or "[]")
+            except Exception:
+                continue
+            changed = False
+            for leg in legs:
+                hit = by_fid.get(leg.get("fixture_id")) or by_pair.get(
+                    f"{str(leg.get('home', '')).lower()} vs {str(leg.get('away', '')).lower()}"
+                )
+                if hit:
+                    leg["home_goals"] = hit["home_goals"]
+                    leg["away_goals"] = hit["away_goals"]
+                    leg["score"] = hit["score"]
+                    leg["status_short"] = hit["status_short"]
+                    leg["elapsed"] = hit["elapsed"]
+                    leg["status"] = hit["status"]
+                    changed = True
+            if changed:
+                sb_patch("saved_cards", f"id=eq.{row_id}", {"legs": json.dumps(legs, separators=(",", ":"))})
+
+    _sb_request(
+        "DELETE", "saved_markets",
+        f"date=eq.{date_str}&market=eq.live_cache",
+        service=True, prefer="return=minimal",
+    )
+    sb_post("saved_markets", [{
+        "date": date_str,
+        "market": "live_cache",
+        "home": "SYSTEM",
+        "away": "CACHE",
+        "league": "SYSTEM",
+        "kickoff": datetime.now(timezone.utc).isoformat(),
+        "odds": None,
+        "result": json.dumps({"ts": now_ts, "items": compact_items}, separators=(",", ":")),
+    }])
+
+    return {
+        "date": date_str,
+        "cached": False,
+        "next_update_in_sec": LIVE_COOLDOWN_SECONDS,
+        "live": len(compact_items),
+        "items": compact_items,
+        "source": "api-football - refreshed (30m cooldown started)",
+    }
+
+
 def _json(data, status=200):
     return {
         "statusCode": status,
@@ -715,13 +1006,16 @@ def handler(event, context):
     if path == "/api/health":
         return _json({
             "ok": True, "timezone": "Africa/Lagos", "keep_days": KEEP_DAYS,
+            "live_cooldown_minutes": LIVE_COOLDOWN_SECONDS // 60,
             "supabase_configured": bool(SUPABASE_URL and SUPABASE_SERVICE),
             "api_key_configured": bool(API_FOOTBALL_KEY),
             "markets": len(MARKETS_12),
         })
 
     if path == "/api/cron":
-        result = run_daily_build(query.get("date"))
+        target_date = query.get("date")
+        include_tmr = str(query.get("tomorrow", "1")).lower() not in ("0", "false", "no")
+        result = run_daily_build(target_date, include_tomorrow=include_tmr)
         return _json(result, 200 if result.get("ok") else 503)
 
     if path == "/api/build-cards" and method == "POST":
@@ -747,7 +1041,7 @@ def handler(event, context):
                 return _json({"error": "Invalid date"}, 400)
             safe = urllib.parse.quote(date_str, safe="")
             cards, err1 = _read_rows("saved_cards", f"date=eq.{safe}&order=created_at.asc")
-            matches, err2 = _read_rows("saved_markets", f"date=eq.{safe}&order=created_at.asc")
+            matches, err2 = _read_rows("saved_markets", f"date=eq.{safe}&market=eq.fixture&order=created_at.asc")
             if err1 or err2:
                 return _json({"error": err1 or err2}, 503)
             return _json({"date": date_str, "cards": cards, "matches": matches,
@@ -768,7 +1062,7 @@ def handler(event, context):
             return _json({"error": "Invalid date"}, 400)
         safe = urllib.parse.quote(date_str, safe="")
         cards, e1 = _read_rows("saved_cards", f"date=eq.{safe}&order=created_at.asc")
-        matches, e2 = _read_rows("saved_markets", f"date=eq.{safe}&order=created_at.asc")
+        matches, e2 = _read_rows("saved_markets", f"date=eq.{safe}&market=eq.fixture&order=created_at.asc")
         standings, e3 = _read_rows("saved_standings", f"date=eq.{safe}&order=league.asc,position.asc")
         if e1 or e2 or e3:
             return _json({"error": e1 or e2 or e3}, 503)
@@ -797,11 +1091,8 @@ def handler(event, context):
         date_str = query.get("date") or local_today()
         if not valid_date(date_str):
             return _json({"error": "Invalid date"}, 400)
-        data = af_get("/fixtures?live=all")
-        live = data.get("response", []) if isinstance(data, dict) else []
-        return _json({"date": date_str, "live": len(live), "fixtures": live,
-                      "source": "api-football - live score update",
-                      "error": data.get("error") if isinstance(data, dict) else None})
+        result = _sync_live_scores_with_cooldown(date_str)
+        return _json(result)
 
     if path == "/api/saved-markets":
         if method == "POST":
@@ -811,7 +1102,7 @@ def handler(event, context):
                 return _json({"error": "Invalid JSON body"}, 400)
             result = sb_post("saved_markets", payload)
             return _json(result, 503 if _has_error(result) else 200)
-        rows, error = _read_rows("saved_markets", "order=created_at.desc&limit=200")
+        rows, error = _read_rows("saved_markets", "market=eq.fixture&order=created_at.desc&limit=200")
         return _json({"error": error} if error else rows, 503 if error else 200)
 
     if path == "/api/saved-cards":
